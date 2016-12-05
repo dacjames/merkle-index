@@ -28,6 +28,14 @@ sealed abstract class MerkleIndex[Key: Ordering, Value] {
     (newKeys, newValues)
   }
 
+  private[this] def insert(keys: Vector[Key])(key: Key): Vector[Key] = {
+    var pos = 0
+    while (pos < keys.size && implicitly[Ordering[Key]].gteq(key, keys(pos))) pos += 1
+
+    val newKeys = (keys.slice(0, pos) :+ key) ++ keys.slice(pos, keys.size + 1)
+    newKeys
+  }
+
   private[this] def showTreeInner(level: Int, tree: MerkleIndex[Key, Value]): String = {
     val indent = (0 until level).map(_ => "  ").mkString
     tree match {
@@ -111,7 +119,7 @@ sealed abstract class MerkleIndex[Key: Ordering, Value] {
 
         if (target.isFull) {
           val (middleKey, left, right) = split(target, key, value)
-          val newKeys = (keys :+ middleKey).sorted
+          val newKeys = insert(keys)(middleKey)
 
           val newChildren =
             children.slice(0, pos) ++

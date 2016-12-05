@@ -27,6 +27,20 @@ object Main extends App {
 //  println(MerkleIndex[Int, String](2, 3, 13, 14, 5, 7, 16, 19, 20, 15, 21, 8, 22, 23).showTree)
 //  println(MerkleIndex[Int, String](2, 3, 13, 14, 5, 7, 16, 19, 20, 15, 21, 8, 22, 23, 1, 0, 9, 10).showTree)
 
-//  println(MerkleIndex[Int, String](22,5,32,8,12,17,25,35,41,43,50,61,64).showTree)
+  println(MerkleIndex[Int, String](
+    22 -> "a",
+    5 -> "b",
+    32 -> "c",
+    8 -> "d",
+    12 -> "e",
+    17 -> "f",
+    25 -> "g",
+    35 -> "h",
+    41 -> "i",
+    43 -> "j",
+    50 -> "k",
+    61 -> "l",
+    64 -> "m").showTree)
+
 
 }
