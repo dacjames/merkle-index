@@ -1,8 +1,6 @@
 package io.dac.merkleindex
 
 
-
-
 /**
   * Created by dcollins on 12/3/16.
   */

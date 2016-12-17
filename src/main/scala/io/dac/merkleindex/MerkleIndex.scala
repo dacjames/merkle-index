@@ -90,6 +90,16 @@ sealed abstract class MerkleIndex[Key: Ordering, Value] {
     }
   }
 
+  private[this] def nonNegative(x: Int): Option[Int] =
+    if (x >= 0) Some(x)
+    else None
+
+  def apply(key: Key): Value = get(key).get
+  def get(key: Key): Option[Value] = this match {
+    case Inner(_, keys, children) => ???
+    case Outer(_, keys, values) =>
+      nonNegative(keys.indexWhere(k => k == key)).map(values)
+  }
   def add(key: Key, value: Value): MerkleIndex[Key, Value] = this match {
     case Outer(hashcode, keys, values) =>
       if (keys.size < capacity) {
@@ -140,14 +150,16 @@ object MerkleIndex {
   type HashCode = String
   val _capacity = 4
 
-  case class Inner[Key: Ordering, Value]
-  (hashcode: HashCode, keys: Vector[Key], children: Vector[MerkleIndex[Key, Value]])
+  case class Inner[Key: Ordering, Value](hashcode: HashCode,
+                                         keys: Vector[Key],
+                                         children: Vector[MerkleIndex[Key, Value]])
     extends MerkleIndex[Key, Value] {
     override def capacity = _capacity
   }
 
   object Inner {
-    def apply[Key: Ordering, Value](keys: Vector[Key], children: Vector[MerkleIndex[Key, Value]]): Inner[Key, Value] = {
+    def apply[Key: Ordering, Value](keys: Vector[Key],
+                                    children: Vector[MerkleIndex[Key, Value]]): Inner[Key, Value] = {
       val newCode = chainHash(children.map(_.hashcode))
       Inner(newCode, keys, children)
     }
@@ -160,7 +172,8 @@ object MerkleIndex {
   }
 
   object Outer {
-    def apply[Key: Ordering, Value](keys: Vector[Key], values: Vector[Value]): Outer[Key, Value] = {
+    def apply[Key: Ordering, Value](keys: Vector[Key],
+                                    values: Vector[Value]): Outer[Key, Value] = {
       val newCode = chainHash(keys)
       Outer(newCode, keys, values)
     }
@@ -202,5 +215,7 @@ object MerkleIndex {
       sorted.drop(_capacity).foldLeft[MerkleIndex[Key, Value]](initial){(n, kv) => n.add(kv._1, kv._2)}
     }
   }
+
+  def empty[K: Ordering, V] = MerkleIndex[K, V]()
 
 }
