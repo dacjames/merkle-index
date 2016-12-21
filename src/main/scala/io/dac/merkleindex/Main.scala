@@ -1,5 +1,7 @@
 package io.dac.merkleindex
 
+import io.dac.merkleindex.memory.MerkleIndex
+
 
 /**
   * Created by dcollins on 12/3/16.

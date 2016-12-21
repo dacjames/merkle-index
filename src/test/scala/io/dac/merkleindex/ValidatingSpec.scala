@@ -1,22 +1,24 @@
 package io.dac.merkleindex
-import io.dac.merkleindex.memory.MerkleImpl
+import io.dac.merkleindex.validating.ValidatingImpl
+import cats.instances.all._
+
+import scala.util.Success
 
 /**
-  * Created by dcollins on 12/17/16.
+  * Created by dcollins on 12/20/16.
   */
-class MerkleSpec extends AbstractSpec {
-
+class ValidatingSpec extends AbstractSpec {
   "An Index" should "return the values inserted" in {
-    MerkleImpl.execute { index =>
+    ValidatingImpl.execute { index =>
       for {
         _ <- index.insert("hello", "10")
         v <- index.lookup("hello")
       } yield v
-    } shouldEqual "10"
+    } shouldEqual Success("10")
   }
 
   it should "return values inserted with many values" in {
-    MerkleImpl.execute { index =>
+    ValidatingImpl.execute { index =>
       for {
         _ <- index.insert("a", "10")
         _ <- index.insert("b", "20")
@@ -30,19 +32,7 @@ class MerkleSpec extends AbstractSpec {
         _ <- index.insert("j", "100")
         v <- index.lookup("d")
       } yield v
-    } shouldEqual "40"
-  }
-
-  it should "support deletes" in {
-    an[NoSuchElementException] should be thrownBy {
-      MerkleImpl.execute { index =>
-        for {
-          _ <- index.insert("hello", "10")
-          _ <- index.delete("hello")
-          v <- index.lookup("hello")
-        } yield v
-      }
-    }
+    } shouldEqual Success("40")
   }
 
 }

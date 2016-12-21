@@ -1,6 +1,7 @@
-package io.dac.merkleindex
+package io.dac.merkleindex.memory
 
 import java.security.MessageDigest
+
 import scala.util.hashing.MurmurHash3
 
 /**
@@ -94,9 +95,18 @@ sealed abstract class MerkleIndex[Key: Ordering, Value] {
     if (x >= 0) Some(x)
     else None
 
+  private[this] def findChild(key: Key, children: Vector[MerkleIndex[Key, Value]]): (Int, MerkleIndex[Key, Value]) = {
+    var pos = 0
+    while (pos < keys.length && implicitly[Ordering[Key]].gteq(key, keys(pos))) pos += 1
+    (pos, children(pos))
+  }
+
   def apply(key: Key): Value = get(key).get
   def get(key: Key): Option[Value] = this match {
-    case Inner(_, keys, children) => ???
+    case Inner(_, keys, children) => {
+      val (_, child) = findChild(key, children)
+      child.get(key)
+    }
     case Outer(_, keys, values) =>
       nonNegative(keys.indexWhere(k => k == key)).map(values)
   }
@@ -142,6 +152,20 @@ sealed abstract class MerkleIndex[Key: Ordering, Value] {
           Inner(keys, children.updated(pos, newChild))
         }
       }
+    }
+  }
+  def delete(key: Key): MerkleIndex[Key, Value] = this match {
+    case node @ Inner(_, keys, children) => {
+      val (pos, child) = findChild(key, children)
+      node.copy(children = children.updated(pos, child.delete(key)))
+    }
+    case node @ Outer(_, keys, values) => {
+      nonNegative(keys.indexWhere(k => k == key)).map{ pos =>
+        node.copy(
+          keys = keys.take(pos) ++ keys.drop(pos + 1),
+          values = values.take(pos) ++ values.drop(pos + 1)
+        )
+      }.getOrElse(node)
     }
   }
 }

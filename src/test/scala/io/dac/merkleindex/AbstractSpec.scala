@@ -7,6 +7,4 @@ import org.scalatest.{FlatSpec, Matchers}
   */
 abstract class AbstractSpec extends FlatSpec with Matchers {
 
-
-
 }
