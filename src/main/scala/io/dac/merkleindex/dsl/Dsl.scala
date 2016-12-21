@@ -33,6 +33,7 @@ sealed abstract class AbstractIndexDsl[ValueType] {
 
     def delete(name: String): Free[F, Unit] =
       inject(Delete(name))
+
   }
   object Dsl {
     implicit def dsl[F[_]](implicit I: Inject[Command, F]): Dsl[F] = new Dsl[F]

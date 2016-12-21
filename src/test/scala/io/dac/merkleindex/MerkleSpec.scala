@@ -44,5 +44,59 @@ class MerkleSpec extends AbstractSpec {
       }
     }
   }
+  it should "support deletes with many values" in {
+    MerkleImpl.execute { index =>
+      for {
+        _ <- index.insert("a", "10")
+        _ <- index.insert("b", "20")
+        _ <- index.insert("c", "30")
+        _ <- index.insert("d", "40")
+        _ <- index.insert("e", "50")
+        _ <- index.insert("f", "60")
+        _ <- index.insert("g", "70")
+        _ <- index.insert("h", "80")
+        _ <- index.insert("i", "90")
+        _ <- index.insert("j", "100")
+        _ <- index.delete("d")
+        v <- index.lookup("h")
+      } yield v
+    } shouldEqual "80"
+
+    an[NoSuchElementException] should be thrownBy {
+      MerkleImpl.execute { index =>
+        for {
+          _ <- index.insert("a", "10")
+          _ <- index.insert("b", "20")
+          _ <- index.insert("c", "30")
+          _ <- index.insert("d", "40")
+          _ <- index.insert("e", "50")
+          _ <- index.insert("f", "60")
+          _ <- index.insert("g", "70")
+          _ <- index.insert("h", "80")
+          _ <- index.insert("i", "90")
+          _ <- index.insert("j", "100")
+          _ <- index.delete("d")
+          v <- index.lookup("d")
+        } yield v
+      }
+    }
+
+    MerkleImpl.execute { index =>
+      for {
+        _ <- index.insert("a", "10")
+        _ <- index.insert("b", "20")
+        _ <- index.insert("c", "30")
+        _ <- index.insert("d", "40")
+        _ <- index.insert("e", "50")
+        _ <- index.insert("f", "60")
+        _ <- index.insert("g", "70")
+        _ <- index.insert("h", "80")
+        _ <- index.insert("i", "90")
+        _ <- index.insert("j", "100")
+        _ <- index.delete("i")
+        v <- index.lookup("h")
+      } yield v
+    } shouldEqual "80"
+  }
 
 }

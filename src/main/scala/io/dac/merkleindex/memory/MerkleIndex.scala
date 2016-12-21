@@ -154,18 +154,76 @@ sealed abstract class MerkleIndex[Key: Ordering, Value] {
       }
     }
   }
-  def delete(key: Key): MerkleIndex[Key, Value] = this match {
+  private def merge(left: MerkleIndex[Key, Value], right: MerkleIndex[Key, Value]): MerkleIndex[Key, Value] = {
+
+    println(s"Merging...")
+    println(left.showTree)
+    println(right.showTree)
+
+    // left and right will always be the same type
+    val newNode = (left, right) match {
+      case (Inner(_, leftkeys, leftchildren), Inner(_, rightkeys, rightchildren)) =>
+        Inner(leftkeys ++ rightkeys, leftchildren ++ rightchildren)
+
+      case (Outer(_, leftkeys, leftvalues), Outer(_, rightkeys, rightvalues)) =>
+        Outer(leftkeys ++ rightkeys, leftvalues ++ rightvalues)
+
+      case _ => throw new IllegalStateException(s"Tried to merge Inner and Outer Nodes.")
+    }
+    println(s"==>")
+    println(s"${newNode.showTree}")
+    newNode
+  }
+
+  def delete(key: Key): MerkleIndex[Key, Value] = {
+    val (_, newTree) = deleteInner(key)
+    newTree
+  }
+
+  private def deleteInner(key: Key): (DeleteResult, MerkleIndex[Key, Value]) = this match {
     case node @ Inner(_, keys, children) => {
       val (pos, child) = findChild(key, children)
-      node.copy(children = children.updated(pos, child.delete(key)))
+      val (result, newChild) = child.deleteInner(key)
+
+      result match {
+        case DeleteResult.Noop => (DeleteResult.Noop, node.copy(children = children.updated(pos, newChild)))
+        case DeleteResult.Merge => {
+          val newNode = if (pos < keys.length) {
+            // the "normal" case, when not deleting from the last child
+            val mergedChild = merge(newChild, children(pos + 1))
+            node.copy(
+              keys = keys.take(pos) ++ keys.drop(pos + 1),
+              children = (children.take(pos) :+ mergedChild) ++ children.drop(pos + 2)
+            )
+          } else {
+            // when deleting from the last child
+            val mergedChild = merge(children(pos - 1), newChild)
+            node.copy(
+              keys = keys.take(pos - 1) ,
+              children = children.take(pos - 1) :+ mergedChild
+            )
+          }
+
+          if (newNode.keys.size < (capacity / 2)) {
+            (DeleteResult.Merge, newNode)
+          } else {
+            (DeleteResult.Noop, newNode)
+          }
+        }
+      }
     }
     case node @ Outer(_, keys, values) => {
       nonNegative(keys.indexWhere(k => k == key)).map{ pos =>
-        node.copy(
+        val newNode = node.copy(
           keys = keys.take(pos) ++ keys.drop(pos + 1),
           values = values.take(pos) ++ values.drop(pos + 1)
         )
-      }.getOrElse(node)
+        if (newNode.keys.size < (capacity / 2)) {
+          (DeleteResult.Merge, newNode)
+        } else {
+          (DeleteResult.Noop, newNode)
+        }
+      }.getOrElse{ (DeleteResult.Noop, node) }
     }
   }
 }
@@ -201,6 +259,12 @@ object MerkleIndex {
       val newCode = chainHash(keys)
       Outer(newCode, keys, values)
     }
+  }
+
+  sealed trait DeleteResult
+  object DeleteResult {
+    case object Noop extends DeleteResult
+    case object Merge extends DeleteResult
   }
 
 
