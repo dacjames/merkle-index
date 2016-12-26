@@ -1,4 +1,4 @@
-package io.dac.merkleindex
+package io.dac.tsindex
 
 import org.scalatest.{FlatSpec, Matchers}
 

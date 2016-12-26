@@ -1,5 +1,5 @@
-package io.dac.merkleindex
-import io.dac.merkleindex.memory.MerkleImpl
+package io.dac.tsindex
+import io.dac.tsindex.memory.InMemoryImpl
 
 /**
   * Created by dcollins on 12/17/16.
@@ -7,7 +7,7 @@ import io.dac.merkleindex.memory.MerkleImpl
 class MerkleSpec extends AbstractSpec {
 
   "An Index" should "return the values inserted" in {
-    MerkleImpl.execute { index =>
+    InMemoryImpl.execute { index =>
       for {
         _ <- index.insert("hello", "10")
         v <- index.lookup("hello")
@@ -16,7 +16,7 @@ class MerkleSpec extends AbstractSpec {
   }
 
   it should "return values inserted with many values" in {
-    MerkleImpl.execute { index =>
+    InMemoryImpl.execute { index =>
       for {
         _ <- index.insert("a", "10")
         _ <- index.insert("b", "20")
@@ -35,7 +35,7 @@ class MerkleSpec extends AbstractSpec {
 
   it should "support deletes" in {
     an[NoSuchElementException] should be thrownBy {
-      MerkleImpl.execute { index =>
+      InMemoryImpl.execute { index =>
         for {
           _ <- index.insert("hello", "10")
           _ <- index.delete("hello")
@@ -45,7 +45,7 @@ class MerkleSpec extends AbstractSpec {
     }
   }
   it should "support deletes with many values" in {
-    MerkleImpl.execute { index =>
+    InMemoryImpl.execute { index =>
       for {
         _ <- index.insert("a", "10")
         _ <- index.insert("b", "20")
@@ -63,7 +63,7 @@ class MerkleSpec extends AbstractSpec {
     } shouldEqual "80"
 
     an[NoSuchElementException] should be thrownBy {
-      MerkleImpl.execute { index =>
+      InMemoryImpl.execute { index =>
         for {
           _ <- index.insert("a", "10")
           _ <- index.insert("b", "20")
@@ -81,7 +81,7 @@ class MerkleSpec extends AbstractSpec {
       }
     }
 
-    MerkleImpl.execute { index =>
+    InMemoryImpl.execute { index =>
       for {
         _ <- index.insert("a", "10")
         _ <- index.insert("b", "20")

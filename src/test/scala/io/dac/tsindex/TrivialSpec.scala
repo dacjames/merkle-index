@@ -1,6 +1,6 @@
-package io.dac.merkleindex
+package io.dac.tsindex
 
-import io.dac.merkleindex.trivial.TrivialImpl
+import io.dac.tsindex.trivial.TrivialImpl
 
 /**
   * Created by dcollins on 12/17/16.

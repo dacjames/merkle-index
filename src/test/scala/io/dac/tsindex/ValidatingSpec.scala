@@ -1,5 +1,5 @@
-package io.dac.merkleindex
-import io.dac.merkleindex.validating.ValidatingImpl
+package io.dac.tsindex
+import io.dac.tsindex.validating.ValidatingImpl
 import cats.instances.all._
 
 import scala.util.Success

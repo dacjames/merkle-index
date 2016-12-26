@@ -1,4 +1,4 @@
-package io.dac.merkleindex.dsl
+package io.dac.tsindex.dsl
 
 import cats.free._
 

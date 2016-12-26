@@ -1,4 +1,4 @@
-package io.dac.merkleindex.memory
+package io.dac.tsindex.memory
 
 import cats.free.Free
 import cats.{Id, ~>}
@@ -6,11 +6,11 @@ import cats.{Id, ~>}
 /**
   * Created by dcollins on 12/17/16.
   */
-object MerkleImpl {
+object InMemoryImpl {
 
-  import io.dac.merkleindex.dsl.StringIndexDsl._
+  import io.dac.tsindex.dsl.StringIndexDsl._
 
-  private final class Impl(var state: MerkleIndex[String, String])
+  private final class Impl(var state: BtreeIndex[String, String])
     extends (Command ~> Id) {
 
     override def apply[A](cmd: Command[A]): A = cmd match {
@@ -28,7 +28,7 @@ object MerkleImpl {
   }
 
   def interpreter: Command ~> Id =
-    new Impl(MerkleIndex.empty)
+    new Impl(BtreeIndex.empty)
 
   def execute[A](program: Dsl[Command] => Free[Command, A])(implicit api: Dsl[Command]): Id[A] =
     program(api).foldMap(interpreter)

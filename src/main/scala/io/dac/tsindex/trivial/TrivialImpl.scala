@@ -1,4 +1,4 @@
-package io.dac.merkleindex.trivial
+package io.dac.tsindex.trivial
 
 import cats.free.Free
 import cats.{Id, ~>}
@@ -10,7 +10,7 @@ import scala.collection.mutable
   * A trivial implementation based on Scala's builtin TreeMap
   */
 object TrivialImpl {
-  import io.dac.merkleindex.dsl.StringIndexDsl._
+  import io.dac.tsindex.dsl.StringIndexDsl._
 
   private final class Impl(var state: mutable.SortedMap[String, String])
     extends (Command ~> Id) {
