@@ -1,12 +1,17 @@
 package io.dac.tsindex.memory
 
+import com.typesafe.scalalogging.LazyLogging
 import io.dac.tsindex.util.StringHasher
 import io.dac.tsindex.util.nonNegative
+
+import scala.annotation.tailrec
+import scala.collection.mutable.ArrayBuffer
+import scala.util.Try
 
 /**
   * Created by dcollins on 12/26/16.
   */
-abstract class BtreeIndex[Key: Ordering, Value] extends StringHasher {
+abstract class BtreeIndex[Key: Ordering, Value] extends Iterable[(Key, Value)] with LazyLogging {
   type HashCode = String
   def capacity: Int
   def root: BtreeNode
@@ -70,11 +75,11 @@ abstract class BtreeIndex[Key: Ordering, Value] extends StringHasher {
       val values = sorted.map(_._2)
 
       if (items.length <= capacity) {
-        Outer(keys.toVector, values.toVector)
+        Outer(keys.toVector, values.toVector, None)
       } else {
         val initialKeys = keys.take(capacity)
         val initialValues = values.take(capacity)
-        val initial: BtreeNode = Outer(initialKeys.toVector, initialValues.toVector)
+        val initial: BtreeNode = Outer(initialKeys.toVector, initialValues.toVector, None)
         sorted.drop(capacity).foldLeft[BtreeNode](initial) { (n, kv) => n.add(kv._1, kv._2) }
       }
     }
@@ -89,76 +94,42 @@ abstract class BtreeIndex[Key: Ordering, Value] extends StringHasher {
     */
   def showTree: String = _root.showTree
 
+  override def iterator: Iterator[(Key, Value)] = iterator(_root)
+
+  /**
+    * Convenience conversion so that keys support basic boolean operators
+    * @param key
+    */
+  private implicit class KeyOps(key: Key) {
+    def lt(other: Key) = implicitly[Ordering[Key]].lt(key, other)
+    def < = lt _
+    def gt(other: Key) = implicitly[Ordering[Key]].gt(key, other)
+    def > = gt _
+    def lteq(other: Key) = implicitly[Ordering[Key]].lteq(key, other)
+    def <= = lteq _
+    def gteq(other: Key) = implicitly[Ordering[Key]].gteq(key, other)
+    def >= = gteq _
+  }
+
   sealed abstract class BtreeNode {
-    def hashcode: String
+    def version: Int
     def keys: Vector[Key]
 
     def isFull: Boolean = this.keys.size == capacity
     def nonFull: Boolean = !isFull
 
-    private[this] def findChild(key: Key, children: Vector[BtreeNode]): (Int, BtreeNode) = {
-      var pos = 0
-      while (pos < keys.length && implicitly[Ordering[Key]].gteq(key, keys(pos))) pos += 1
-      (pos, children(pos))
-    }
-
     def showTree: String = showTreeInner(0, this)
 
     def get(key: Key): Option[Value] = this match {
       case Inner(_, keys, children) => {
-        val (_, child) = findChild(key, children)
+        val (_, child) = findChild(key, keys, children)
         child.get(key)
       }
-      case Outer(_, keys, values) =>
+      case Outer(_, keys, values, _) =>
         nonNegative(keys.indexWhere(k => k == key)).map(values)
     }
 
     def apply(key: Key): Value = get(key).get
-
-    def add(key: Key, value: Value): BtreeNode = this match {
-      case Outer(hashcode, keys, values) =>
-        if (keys.size < capacity) {
-
-          val (newKeys, newValues) = insert(keys, values)(key, value)
-
-          Outer(incHash(hashcode, key), newKeys, newValues)
-        } else {
-          val (middleKey, left, right) = split(this, key, value)
-
-          val newKeys: Vector[Key] =
-            Vector(middleKey)
-          val newChildren: Vector[BtreeNode] =
-            Vector(left, right)
-
-          Inner(newKeys, newChildren)
-        }
-
-      case Inner(hashcode, keys, children) => {
-        if (this.isFull) {
-          val (middleKey, left, right) = split(this, key, value)
-          Inner(Vector(middleKey), Vector(left, right))
-        } else {
-          var pos = 0
-          while (pos < keys.size && implicitly[Ordering[Key]].lt(keys(pos), key)) pos += 1
-          val target = children(pos)
-
-          if (target.isFull) {
-            val (middleKey, left, right) = split(target, key, value)
-            val newKeys = insert(keys)(middleKey)
-
-            val newChildren =
-              children.slice(0, pos) ++
-                Vector(left, right) ++
-                children.slice(pos + 1, children.size + 1)
-            Inner(newKeys, newChildren)
-          }
-          else {
-            val newChild = target.add(key, value)
-            Inner(keys, children.updated(pos, newChild))
-          }
-        }
-      }
-    }
 
     def delete(key: Key): BtreeNode = {
       val (_, newTree) = deleteInner(key)
@@ -167,23 +138,23 @@ abstract class BtreeIndex[Key: Ordering, Value] extends StringHasher {
 
     private def deleteInner(key: Key): (DeleteResult, BtreeNode) = this match {
       case node @ Inner(_, keys, children) => {
-        val (pos, child) = findChild(key, children)
+        val (pos, child) = findChild(key, keys, children)
         val (result, newChild) = child.deleteInner(key)
 
         result match {
-          case DeleteResult.Noop => (DeleteResult.Noop, node.copy(children = children.updated(pos, newChild)))
+          case DeleteResult.Noop => (DeleteResult.Noop, node.vcopy(children = children.updated(pos, newChild)))
           case DeleteResult.Merge => {
             val newNode = if (pos < keys.length) {
               // the "normal" case, when not deleting from the last child
               val mergedChild = merge(newChild, children(pos + 1))
-              node.copy(
+              node.vcopy(
                 keys = keys.take(pos) ++ keys.drop(pos + 1),
                 children = (children.take(pos) :+ mergedChild) ++ children.drop(pos + 2)
               )
             } else {
               // when deleting from the last child
               val mergedChild = merge(children(pos - 1), newChild)
-              node.copy(
+              node.vcopy(
                 keys = keys.take(pos - 1) ,
                 children = children.take(pos - 1) :+ mergedChild
               )
@@ -197,9 +168,9 @@ abstract class BtreeIndex[Key: Ordering, Value] extends StringHasher {
           }
         }
       }
-      case node @ Outer(_, keys, values) => {
+      case node @ Outer(_, keys, values, sibling) => {
         nonNegative(keys.indexWhere(k => k == key)).map{ pos =>
-          val newNode = node.copy(
+          val newNode = node.vcopy(
             keys = keys.take(pos) ++ keys.drop(pos + 1),
             values = values.take(pos) ++ values.drop(pos + 1)
           )
@@ -212,31 +183,118 @@ abstract class BtreeIndex[Key: Ordering, Value] extends StringHasher {
       }
     }
 
+    def add(key: Key, value: Value): BtreeNode = this match {
+      case node@Outer(_, keys, values, sibling) =>
+        if (keys.size < capacity) {
+
+          val (newKeys, newValues) = insert(keys, values)(key, value)
+
+          node.vcopy(keys = newKeys, values = newValues)
+        } else {
+          val (middleKey, left, right) = split(this, key, value)
+
+          val newKeys: Vector[Key] =
+            Vector(middleKey)
+          val newChildren: Vector[BtreeNode] =
+            Vector(left, right)
+
+          Inner(newKeys, newChildren)
+        }
+
+      case node@Inner(_, keys, children) => {
+        if (this.isFull) {
+          val (middleKey, left, right) = split(this, key, value)
+          node.vcopy(keys = Vector(middleKey), children = Vector(left, right))
+        } else {
+          var pos = 0
+          while (pos < keys.size && keys(pos) < key) pos += 1
+          val target = children(pos)
+
+          if (target.isFull) {
+            val (middleKey, left, right) = split(target, key, value)
+            val newKeys = insert(keys)(middleKey)
+
+
+            val newChildren =
+              if (pos > 0 && children(pos - 1).isInstanceOf[Outer]) {
+                // Fix sibling pointer in children when splitting outer nodes
+                // left.asInstanceOf is safe because of the children.isInstanceOf check
+                fixSiblings(children, pos, left) ++
+                  Vector(right) ++
+                  children.slice(pos + 1, children.size + 1)
+
+              } else {
+                children.slice(0, pos) ++
+                  Vector(left, right) ++
+                  children.slice(pos + 1, children.size + 1)
+              }
+
+
+            node.vcopy(keys = newKeys, children = newChildren)
+          }
+          else {
+            val newChild = target.add(key, value)
+
+
+            val newChildren =
+              if (pos > 0 && children(pos - 1).isInstanceOf[Outer]) {
+                fixSiblings(children, pos, newChild)
+              } else {
+                children.updated(pos, newChild)
+              }
+
+            node.vcopy(children = newChildren)
+          }
+        }
+      }
+    }
+
   }
 
-  case class Inner(hashcode: HashCode,
+  case class Inner(version: Int,
                    keys: Vector[Key],
-                   children: Vector[BtreeNode]) extends BtreeNode
+                   children: Vector[BtreeNode]) extends BtreeNode {
+    def vcopy(keys: Vector[Key] = null, children: Vector[BtreeNode] = null) = {
+      (keys, children) match {
+        case (null, null)     => this
+        case (null, children) => this.copy(this.version, children = children)
+        case (keys, null)     => this.copy(version = nextVersion(this.version), keys = keys)
+        case (keys, children) => this.copy(version = nextVersion(this.version), keys = keys, children = children)
+      }
+    }
+  }
 
   object Inner {
     def apply(keys: Vector[Key],
               children: Vector[BtreeNode]): Inner = {
-      val newCode = chainHash(children.map(_.hashcode))
-      Inner(newCode, keys, children)
+      Inner(0, keys, children)
     }
   }
 
-  case class Outer(hashcode: HashCode,
+  case class Outer(version: Int,
                    keys: Vector[Key],
-                   values: Vector[Value]) extends BtreeNode
+                   values: Vector[Value],
+                   sibling: Option[Outer]) extends BtreeNode {
+    def vcopy(keys: Vector[Key] = null, values: Vector[Value] = null, sibling: Option[Outer] = null) = {
+      (keys, values, sibling) match {
+        case (null, null, null)       => this
+        case (null, values, null)     => this.copy(this.version, values = values)
+        case (keys, null, null)       => this.copy(version = nextVersion(this.version), keys = keys)
+        case (keys, values, null)     => this.copy(version = nextVersion(this.version), keys = keys, values = values)
+        case (null, null, sibling)    => this.copy(version = nextVersion(this.version), sibling = sibling)
+        case (null, values, sibling)  => this.copy(version = nextVersion(this.version), values = values, sibling = sibling)
+        case (keys, null, sibling)       => this.copy(version = nextVersion(this.version), keys = keys, sibling = sibling)
+        case (keys, values, sibling)     => this.copy(version = nextVersion(this.version), keys = keys, values = values, sibling = sibling)
+      }
+    }
+  }
 
   object Outer {
     def apply(): Outer = {
-      Outer("", Vector.empty[Key], Vector.empty[Value])
+      Outer(0, Vector.empty[Key], Vector.empty[Value], None)
     }
-    def apply(keys: Vector[Key], values: Vector[Value]): Outer = {
-      val newCode = chainHash(keys)
-      Outer(newCode, keys, values)
+    def apply(keys: Vector[Key], values: Vector[Value], sibling: Option[Outer]): Outer = {
+      Outer(0, keys, values, sibling)
     }
   }
 
@@ -246,9 +304,18 @@ abstract class BtreeIndex[Key: Ordering, Value] extends StringHasher {
     case object Merge extends DeleteResult
   }
 
+  private[this] def nextVersion(v: Int): Int =
+    v + 1
+
+  private[this] def findChild(key: Key, keys: Vector[Key], children: Vector[BtreeNode]): (Int, BtreeNode) = {
+    var pos = 0
+    while (pos < keys.length && key >= keys(pos)) pos += 1
+    (pos, children(pos))
+  }
+
   private[this] def insert(keys: Vector[Key], values: Vector[Value])(key: Key, value: Value): (Vector[Key], Vector[Value]) = {
     var pos = 0
-    while (pos < keys.size && implicitly[Ordering[Key]].gteq(key, keys(pos))) pos += 1
+    while (pos < keys.size && key >= keys(pos)) pos += 1
 
     val newKeys = (keys.slice(0, pos) :+ key) ++ keys.slice(pos, keys.size + 1)
     val newValues = (values.slice(0, pos) :+ value) ++ values.slice(pos, values.size + 1)
@@ -258,7 +325,7 @@ abstract class BtreeIndex[Key: Ordering, Value] extends StringHasher {
 
   private[this] def insert(keys: Vector[Key])(key: Key): Vector[Key] = {
     var pos = 0
-    while (pos < keys.size && implicitly[Ordering[Key]].gteq(key, keys(pos))) pos += 1
+    while (pos < keys.size && key >= keys(pos)) pos += 1
 
     val newKeys = (keys.slice(0, pos) :+ key) ++ keys.slice(pos, keys.size + 1)
     newKeys
@@ -267,18 +334,19 @@ abstract class BtreeIndex[Key: Ordering, Value] extends StringHasher {
   private[this] def showTreeInner(level: Int, tree: BtreeNode): String = {
     val indent = (0 until level).map(_ => "  ").mkString
     tree match {
-      case Outer(hc, keys, values) => {
+      case Outer(version, keys, values, sibling) => {
         val itemString = keys.zip(values).map(kv => s"${kv._1} -> ${kv._2}")
-        indent ++ itemString.mkString("[", ", ", "]") ++ s" «${hc}»"
+        val siblingString = if (sibling.isDefined) s"✓" else "✗"
+        indent ++ itemString.mkString("[", ", ", "]") ++ s" «${version}» ${siblingString}"
       }
-      case Inner(hc, keys, children) => {
-        indent ++ keys.mkString("[", ", ", "]") ++ s" «${hc}»\n" ++
+      case Inner(version, keys, children) => {
+        indent ++ keys.mkString("[", ", ", "]") ++ s" «${version}»\n" ++
           children.map(c => showTreeInner(level + 1, c)).mkString("\n")
       }
     }
   }
   private[this] def split(node: BtreeNode, key: Key, value: Value): (Key, BtreeNode, BtreeNode) = node match {
-    case Outer(_, keys, values) => {
+    case node @ Outer(_, keys, values, sibling) => {
       val middlePos = keys.size / 2
       val middleKey = keys(middlePos)
 
@@ -288,15 +356,19 @@ abstract class BtreeIndex[Key: Ordering, Value] extends StringHasher {
       val leftValues = values.slice(0, middlePos)
       val rightValues = values.slice(middlePos, values.size + 1)
 
-      if (implicitly[Ordering[Key]].lt(key, middleKey)) {
+      if (key < middleKey) {
         val (newKeys, newValues) = insert(leftKeys, leftValues)(key, value)
-        (middleKey, Outer(newKeys, newValues), Outer(rightKeys, rightValues))
+        val rightNode = Outer(rightKeys, rightValues, node.sibling)
+        val leftNode = Outer(newKeys, newValues, Some(rightNode))
+        (middleKey, leftNode, rightNode)
       } else {
         val (newKeys, newValues) = insert(rightKeys, rightValues)(key, value)
-        (middleKey, Outer(leftKeys, leftValues), Outer(newKeys, newValues))
+        val rightNode = Outer(newKeys, newValues, node.sibling)
+        val leftNode = Outer(leftKeys, leftValues, Some(rightNode))
+        (middleKey, leftNode, rightNode)
       }
     }
-    case Inner(_, keys, children) => {
+    case node @ Inner(_, keys, children) => {
       val middlePos = keys.size / 2
       val middleKey = keys(middlePos)
 
@@ -309,7 +381,7 @@ abstract class BtreeIndex[Key: Ordering, Value] extends StringHasher {
       val left = Inner(leftKeys, leftChildren)
       val right = Inner(rightKeys, rightChildren)
 
-      if (implicitly[Ordering[Key]].lt(key, middleKey)) {
+      if (key < middleKey) {
         (middleKey, left.add(key, value), right)
       } else {
         (middleKey, left, right.add(key, value))
@@ -318,24 +390,72 @@ abstract class BtreeIndex[Key: Ordering, Value] extends StringHasher {
   }
 
   private[this] def merge(left: BtreeNode, right: BtreeNode): BtreeNode = {
-    println(s"Merging...")
-    println(left.showTree)
-    println(right.showTree)
+    logger.debug("Merging...")
+    logger.debug(left.showTree)
+    logger.debug(right.showTree)
 
     // left and right will always be the same type
     val newNode = (left, right) match {
       case (Inner(_, leftkeys, leftchildren), Inner(_, rightkeys, rightchildren)) =>
         Inner(leftkeys ++ rightkeys, leftchildren ++ rightchildren)
 
-      case (Outer(_, leftkeys, leftvalues), Outer(_, rightkeys, rightvalues)) =>
-        Outer(leftkeys ++ rightkeys, leftvalues ++ rightvalues)
+      case (Outer(_, leftkeys, leftvalues, leftsibling), Outer(_, rightkeys, rightvalues, rightsibling)) =>
+        Outer(leftkeys ++ rightkeys, leftvalues ++ rightvalues, rightsibling)
 
       case _ => throw new IllegalStateException(s"Tried to merge Inner and Outer Nodes.")
     }
-    println(s"==>")
-    println(s"${newNode.showTree}")
+    logger.debug(s"==>")
+    logger.debug(s"${newNode.showTree}")
     newNode
   }
+
+  private[this] def fixSiblings(children: Vector[BtreeNode], pos: Int, newSibling: BtreeNode) =
+    children.slice(0, pos).foldRight(Vector(newSibling)) { (n, ch) =>
+      n.asInstanceOf[Outer].vcopy(sibling = Some(ch(0).asInstanceOf[Outer])) +: ch
+    }
+
+
+
+//  private[this] def recordVersions(node: BtreeNode): Map[Int, Int] = {
+//    var versionInfo = Map.empty[Int, Int]
+//    unsafeForeachNode(node) { n =>
+//      versionInfo += (System.identityHashCode(n) -> n.version)
+//    }
+//    versionInfo
+//  }
+
+  private[this] def iterator(root: BtreeNode): Iterator[(Key, Value)] = {
+    @tailrec
+    def findOuter(node: BtreeNode): Outer =
+      node match {
+        case Inner(_, _, children) =>
+          findOuter(children(0))
+        case node: Outer =>
+          node
+      }
+
+    new Iterator[(Key, Value)] {
+      private var currentNode = findOuter(root)
+      private var currentPos = 0
+
+      override def hasNext: Boolean =
+        currentPos < currentNode.values.size ||
+          currentNode.sibling.isDefined
+
+      override def next: (Key, Value) = {
+        val key = currentNode.keys(currentPos)
+        val value = currentNode.values(currentPos)
+        if (currentPos == currentNode.keys.length - 1 && currentNode.sibling.isDefined) {
+          currentNode = currentNode.sibling.get
+          currentPos = 0
+        } else {
+          currentPos += 1
+        }
+        (key, value)
+      }
+    }
+  }
+
 
 }
 
