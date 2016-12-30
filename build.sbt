@@ -16,6 +16,7 @@ libraryDependencies ++= Vector(
 ) ++ Vector(
   // Scala Test Dependencies
   "org.scalactic"         %% "scalactic"            % "3.0.1",
-  "org.scalatest"         %% "scalatest"            % "3.0.1"
+  "org.scalatest"         %% "scalatest"            % "3.0.1",
+  "org.scalacheck"        %% "scalacheck"           % "1.13.4"
 ).map(_ % "test")
 
