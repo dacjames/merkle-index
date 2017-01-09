@@ -6,14 +6,14 @@ import io.dac.tsindex.memory.{BtreeIndex, InMemoryImpl}
   */
 class BtreeSpec extends AbstractSpec {
 
-  "An Index" should "return the values inserted" in {
-    InMemoryImpl.execute { index =>
-      for {
-        _ <- index.insert("hello", "10")
-        v <- index.lookup("hello")
-      } yield v
-    } shouldEqual "10"
-  }
+//  "An Index" should "return the values inserted" in {
+//    InMemoryImpl.execute { index =>
+//      for {
+//        _ <- index.insert("hello", "10")
+//        v <- index.lookup("hello")
+//      } yield v
+//    } shouldEqual "10"
+//  }
 
   it should "return values inserted with many values" in {
     InMemoryImpl.execute { index =>
@@ -33,21 +33,31 @@ class BtreeSpec extends AbstractSpec {
     } shouldEqual "40"
   }
 
-  it should "support deletes" in {
-    an[NoSuchElementException] should be thrownBy {
-      InMemoryImpl.execute { index =>
-        for {
-          _ <- index.insert("hello", "10")
-          _ <- index.delete("hello")
-          v <- index.lookup("hello")
-        } yield v
-      }
-    }
+  it should "return values inserted with more values" in {
+    InMemoryImpl.execute { index =>
+      for {
+        _ <- index.insert("a", "10")
+        _ <- index.insert("b", "20")
+        _ <- index.insert("c", "30")
+        _ <- index.insert("d", "40")
+        _ <- index.insert("e", "50")
+        _ <- index.insert("f", "60")
+        _ <- index.insert("g", "70")
+        _ <- index.insert("h", "80")
+        _ <- index.insert("i", "90")
+        _ <- index.insert("j", "100")
+        _ <- index.insert("k", "110")
+        _ <- index.insert("l", "120")
+        _ <- index.insert("m", "130")
+        _ <- index.insert("n", "140")
+        _ <- index.insert("o", "150")
+        _ <- index.insert("p", "160")
+        v <- index.lookup("d")
+      } yield v
+    } shouldEqual "40"
   }
-  it should "support deletes with many values" in {
 
-    println("DELETES =================== DELETES")
-
+  it should "return values inserted with even more values" in {
     InMemoryImpl.execute { index =>
       for {
         _ <- index.insert("a", "10")
@@ -64,6 +74,7 @@ class BtreeSpec extends AbstractSpec {
         _ <- index.insert("ab", "a20")
         _ <- index.insert("ac", "a30")
         _ <- index.insert("ad", "a40")
+        _ <- index.insert("da", "d55")
         _ <- index.insert("ae", "a50")
         _ <- index.insert("af", "a60")
         _ <- index.insert("ag", "a70")
@@ -80,10 +91,67 @@ class BtreeSpec extends AbstractSpec {
         _ <- index.insert("bh", "b80")
         _ <- index.insert("bi", "b90")
         _ <- index.insert("bj", "b100")
-        _ <- index.delete("d")
-        v <- index.lookup("h")
-      } yield v
-    } shouldEqual "80"
+      // need to go to bp to expose current bug
+        v1 <- index.lookup("h")
+        v2 <- index.lookup("bb")
+        v3 <- index.lookup("bj")
+      } yield (v1, v2, v3)
+    } shouldEqual ("80", "b20", "b100")
+  }
+//
+//  it should "support deletes" in {
+//    an[NoSuchElementException] should be thrownBy {
+//      InMemoryImpl.execute { index =>
+//        for {
+//          _ <- index.insert("hello", "10")
+//          _ <- index.delete("hello")
+//          v <- index.lookup("hello")
+//        } yield v
+//      }
+//    }
+//  }
+//  it should "support deletes with many values" in {
+//
+//    println("DELETES =================== DELETES")
+//
+//    InMemoryImpl.execute { index =>
+//      for {
+//        _ <- index.insert("a", "10")
+//        _ <- index.insert("b", "20")
+//        _ <- index.insert("c", "30")
+//        _ <- index.insert("d", "40")
+//        _ <- index.insert("e", "50")
+//        _ <- index.insert("f", "60")
+//        _ <- index.insert("g", "70")
+//        _ <- index.insert("h", "80")
+//        _ <- index.insert("i", "90")
+//        _ <- index.insert("j", "100")
+//        _ <- index.insert("aa", "a10")
+//        _ <- index.insert("ab", "a20")
+//        _ <- index.insert("ac", "a30")
+//        _ <- index.insert("ad", "a40")
+//        _ <- index.insert("da", "d55")
+//        _ <- index.insert("ae", "a50")
+//        _ <- index.insert("af", "a60")
+//        _ <- index.insert("ag", "a70")
+//        _ <- index.insert("ah", "a80")
+//        _ <- index.insert("ai", "a90")
+//        _ <- index.insert("aj", "a100")
+//        _ <- index.insert("ba", "b10")
+//        _ <- index.insert("bb", "b20")
+//        _ <- index.insert("bc", "b30")
+//        _ <- index.insert("bd", "b40")
+//        _ <- index.insert("be", "b50")
+//        _ <- index.insert("bf", "b60")
+//        _ <- index.insert("bg", "b70")
+//        _ <- index.insert("bh", "b80")
+//        _ <- index.insert("bi", "b90")
+//        _ <- index.insert("bj", "b100")
+//        _ <- index.delete("d")
+//        v <- index.lookup("h")
+//      } yield v
+//    } shouldEqual "80"
+//  }
 
 //    an[NoSuchElementException] should be thrownBy {
 //      InMemoryImpl.execute { index =>
@@ -120,7 +188,7 @@ class BtreeSpec extends AbstractSpec {
 //        v <- index.lookup("h")
 //      } yield v
 //    } shouldEqual "80"
-  }
+//  }
 
   "An InnerNode" should "have a vcopy method that mirrors the behavior of copy with updated versioning" in {
     val index = BtreeIndex.empty[String, String]

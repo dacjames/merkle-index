@@ -44,7 +44,7 @@ abstract class BtreeIndex[Key: Ordering, Value] extends Iterable[(Key, Value)] w
   def add(key: Key, value: Value): BtreeIndex[Key, Value] =
     new BtreeIndex[Key, Value] {
       override def capacity = _capacity
-      override def root = _root.add(key, value).asInstanceOf[BtreeNode]
+      override def root = add2(_root, key, value).asInstanceOf[BtreeNode]
     }
 
   /**
@@ -130,7 +130,30 @@ abstract class BtreeIndex[Key: Ordering, Value] extends Iterable[(Key, Value)] w
 
         case OuterNode(_, keys, values) =>
           nonNegative(keys.indexWhere(k => k == key)).map(values)
+
+        case node: PointerNode2[_, _, _] =>
+          val (pos, child) = findChild(key, node.keys, node.children)
+          logger.debug(s"WTF: ${pos} ${showNode(node)}")
+          child.get(key)
+
       }
+    }
+
+    def checkInvarients(): this.type = {
+//      logger.debug(s"Checking\n${this.showTree}")
+      this match {
+        case OuterNode(_, keys, values) =>
+          assert(keys.size == values.size)
+
+        case node: PointerNode2[_, _, _] =>
+          assert(node.keys.size + 1 == node.children.size)
+          node.children.foreach(_.checkInvarients())
+
+        case _ =>
+          assert(false)
+
+      }
+      this
     }
 
     def apply(key: Key): Value = get(key).get
@@ -346,7 +369,7 @@ abstract class BtreeIndex[Key: Ordering, Value] extends Iterable[(Key, Value)] w
             }
           }
       }
-      logger.debug(s"==>\n${newNode.showTree}")
+      logger.debug(s"Added ${key}->${value} ==>\n${newNode.showTree}")
       newNode
     }
   }
@@ -356,6 +379,7 @@ abstract class BtreeIndex[Key: Ordering, Value] extends Iterable[(Key, Value)] w
     def children: Vector[BtreeNode]
   }
 
+
   object PointerNode {
     def unapply(node: PointerNode): Option[(Int, Vector[Key], Vector[BtreeNode])] =
       node match {
@@ -364,6 +388,100 @@ abstract class BtreeIndex[Key: Ordering, Value] extends Iterable[(Key, Value)] w
       }
 
   }
+
+  sealed abstract class PointerNode2[ChildNode <: BtreeNode, ParentNode <: BtreeNode,
+                                     Node <: PointerNode2[ChildNode, ParentNode, Node]]
+    extends BtreeNode {
+    def keys: Vector[Key]
+    def children: Vector[ChildNode]
+    override def size: Int =
+      this.children.size
+
+    def findTarget(key: Key): (Int, ChildNode) = {
+      var pos = 0
+      while (pos < keys.size && keys(pos) < key) pos += 1
+      val target = children(pos)
+      (pos, target)
+    }
+
+    def withPartition[A](f: (Key, (Vector[Key], Vector[ChildNode]), (Vector[Key], Vector[ChildNode])) => A) = {
+      val middlePos = this.keys.size / 2
+      val middleKey = this.keys(middlePos)
+
+      val leftKeys = this.keys.slice(0, middlePos)
+      val rightKeys = this.keys.slice(middlePos + 1, this.keys.size + 1)
+
+      val leftChildren = this.children.slice(0, middlePos + 1)
+      val rightChildren = this.children.slice(middlePos + 1, this.children.size + 1)
+
+      f(middleKey, (leftKeys, leftChildren), (rightKeys, rightChildren))
+    }
+
+    def split: ParentNode
+    def vcopy(version: Int, keys: Vector[Key], children: Vector[ChildNode]): Node
+
+  }
+
+  case class RootNode2[InnerOrRoot <: BtreeNode](version: Int,
+                                                 keys: Vector[Key],
+                                                 children: Vector[InnerOrRoot])
+    extends PointerNode2[InnerOrRoot, RootNode2[InnerOrRoot], RootNode2[InnerOrRoot]] {
+
+    override def vcopy(version: Int, keys: Vector[Key], children: Vector[InnerOrRoot]) =
+      copy(version=version, keys=keys, children=children)
+
+
+
+    override def split: RootNode2[InnerOrRoot] = withPartition {
+      case (mk, (lk, lc), (rk, rc)) =>
+
+        val leftNode = RootNode2(0, lk, lc)
+        val rightNode = RootNode2(0, rk, rc)
+
+        RootNode2(0, Vector(mk), Vector(leftNode, rightNode)).asInstanceOf[RootNode2[InnerOrRoot]]
+    }
+  }
+
+  case class InnerNode2(version: Int,
+                        keys: Vector[Key],
+                        children: Vector[MiddleNode2])
+    extends PointerNode2[MiddleNode2, RootNode2[InnerNode2], InnerNode2] {
+
+    override def vcopy(version: Int, keys: Vector[Key], children: Vector[MiddleNode2]) =
+      copy(version=version, keys=keys, children=children)
+
+
+    override def split: RootNode2[InnerNode2] = withPartition {
+      case (mk, (lk, lc), (rk, rc)) =>
+
+      val rightNode = InnerNode2(0, rk, rc)
+      val leftNode = InnerNode2(0, lk, lc)
+
+      RootNode2(0, Vector(mk), Vector(leftNode, rightNode))
+    }
+  }
+
+  case class MiddleNode2(version: Int,
+                         keys: Vector[Key],
+                         children: Vector[OuterNode],
+                         sibling: Option[MiddleNode2])
+    extends PointerNode2[OuterNode, InnerNode2, MiddleNode2] {
+
+    override def vcopy(version: Int, keys: Vector[Key], children: Vector[OuterNode]) =
+      copy(version=version, keys=keys, children=children)
+
+    override def split: InnerNode2 = withPartition {
+      case (mk, (lk, lc), (rk, rc)) =>
+
+        val rightNode = MiddleNode2(0, rk, rc, None)
+        val leftNode = MiddleNode2(0, lk, lc, Some(rightNode))
+
+        logger.debug(s"WTF: ${showNode(leftNode)}, ${showNode(rightNode)}")
+
+        InnerNode2(0, Vector(mk), Vector(leftNode, rightNode))
+    }
+  }
+
 
   case class InnerNode(version: Int,
                        keys: Vector[Key],
@@ -429,6 +547,28 @@ abstract class BtreeIndex[Key: Ordering, Value] extends Iterable[(Key, Value)] w
 
     override def size: Int = values.size
 
+    def uncheckedInsert(key: Key, value: Value): OuterNode = {
+      val (newKeys, newValues) = insertAbstract(keys, values)(key, value)
+      this.vcopy(newKeys, newValues)
+    }
+
+    def split: MiddleNode2 = {
+      val middlePos = this.keys.size / 2
+      val middleKey = this.keys(middlePos)
+
+      val leftKeys = this.keys.slice(0, middlePos)
+      val rightKeys = this.keys.slice(middlePos, this.keys.size + 1)
+
+      val leftValues = this.values.slice(0, middlePos)
+      val rightValues = this.values.slice(middlePos, this.values.size + 1)
+
+      val leftNode = OuterNode(leftKeys, leftValues)
+      val rightNode = OuterNode(rightKeys, rightValues)
+
+      MiddleNode2(0, Vector(middleKey), Vector(leftNode, rightNode), None)
+    }
+
+
     def vcopy(keys: Vector[Key] = null, values: Vector[Value] = null) = {
       (keys, values) match {
         case (null, null)       => this
@@ -464,6 +604,114 @@ abstract class BtreeIndex[Key: Ordering, Value] extends Iterable[(Key, Value)] w
   private[this] def nextVersion(v: Int): Int =
     v + 1
 
+  private[this] def add3(node: BtreeNode, key: Key, value: Value): BtreeNode = {
+    logger.debug(s"Add2 ${key} -> ${value} to\n${node.showTree}")
+    val newNode: BtreeNode = ???
+
+    logger.debug(s"Added  ${key} -> ${value}  ==>\n${newNode.showTree}")
+    newNode.checkInvarients()
+  }
+
+  private[this] def add2(node: BtreeNode, key: Key, value: Value): BtreeNode = {
+    logger.debug(s"Add2 ${key} -> ${value} to\n${node.showTree}")
+    val newNode: BtreeNode = node match {
+
+      case node @ RootNode2(_, keys, children) =>
+        val (pos, target) = node.findTarget(key)
+        logger.debug(s"${showNode(node)} !=> ${showNode(target)}")
+        val newNode = add2(target, key, value) match {
+          case it: RootNode2[_] =>
+            // BUG: This rootNode may or may not have been the result of a split.
+            // We're not handling the case where it is properly
+            node.copy(version = node.version + 1, children = children.updated(pos, it)).checkInvarients()
+          case it: InnerNode2 =>
+            node.copy(version = node.version + 1, children = children.updated(pos, it)).checkInvarients()
+
+          case it: Any =>
+            logger.debug(s"?=> ${showNode(it)}")
+            throw new IllegalStateException(s"add2(Inner or Root) should only ever return RootNode2 or InnerNode2, not ${it}")
+        }
+        if (newNode.isFull) {
+          newNode.split
+        } else {
+          newNode
+        }
+
+      case node @ InnerNode2(_, keys, children) =>
+        val (pos, target) = node.findTarget(key)
+        logger.debug(s"${showNode(node)} !=> ${showNode(target)}")
+        val newNode = add2(target, key, value) match {
+          case it: MiddleNode2 =>
+            node.copy(version = node.version + 1, children = children.updated(pos, it)).checkInvarients()
+          case it: InnerNode2 =>
+            val newChildren = children.slice(0, pos) ++ it.children ++ children.slice(pos + 1, children.size + 1)
+            val newKeys =
+              keys.slice(0, pos) ++
+                it.keys ++
+                keys.slice(pos, keys.size + 1)
+            node.copy(
+              version = node.version + 1,
+              keys = newKeys,
+              children = newChildren
+            ).checkInvarients()
+          case newNode: Any =>
+            throw new IllegalStateException(s"add2(OuterNode) should only ever return MiddleNode2 or InnerNode2, not ${newNode}")
+        }
+        if (newNode.isFull) {
+          newNode.split
+        } else {
+          newNode
+        }
+
+      case node @ MiddleNode2(_, keys, children, sibling) =>
+        val (pos, target) = node.findTarget(key)
+        val newNode = add2(target, key, value) match {
+          case newNode: OuterNode =>
+            node.copy(version = node.version + 1, children = children.updated(pos, newNode)).checkInvarients()
+          case newNode: MiddleNode2 =>
+            // not fixing sibling pointers
+            val newChildren =
+              children.slice(0, pos) ++
+              newNode.children ++
+              children.slice(pos + 1, children.size + 1)
+            val newKeys =
+              keys.slice(0, pos) ++
+              newNode.keys ++
+              keys.slice(pos, keys.size + 1)
+
+            node.copy(
+              version = node.version + 1,
+              keys = newKeys,
+              children = newChildren
+            ).checkInvarients()
+          case newNode: Any =>
+            throw new IllegalStateException(s"add2(OuterNode) should only ever return OuterNode or MiddleNode, not ${newNode}")
+        }
+
+        if (newNode.isFull) {
+          newNode.split
+        } else {
+          newNode
+        }
+
+      case node @ OuterNode(_, keys, values) =>
+        val (newKeys, newValues) = insert(keys, values)(key, value)
+        val newNode = node.vcopy(keys = newKeys, values = newValues)
+        if (newNode.isFull) {
+          newNode.split
+        } else {
+          newNode
+        }
+
+    }
+
+
+    logger.debug(s"Added  ${key} -> ${value}  ==>\n${newNode.showTree}")
+    newNode.checkInvarients()
+    newNode
+  }
+
+
   private[this] def findChild[Node <: BtreeNode](key: Key, keys: Vector[Key], children: Vector[Node]): (Int, Node) = {
     var pos = 0
     while (pos < keys.length && key >= keys(pos)) pos += 1
@@ -471,6 +719,17 @@ abstract class BtreeIndex[Key: Ordering, Value] extends Iterable[(Key, Value)] w
   }
 
   private[this] def insert(keys: Vector[Key], values: Vector[Value])(key: Key, value: Value): (Vector[Key], Vector[Value]) = {
+    var pos = 0
+    while (pos < keys.size && key >= keys(pos)) pos += 1
+
+    val newKeys = (keys.slice(0, pos) :+ key) ++ keys.slice(pos, keys.size + 1)
+    val newValues = (values.slice(0, pos) :+ value) ++ values.slice(pos, values.size + 1)
+
+    (newKeys, newValues)
+  }
+
+
+  private[this] def insertAbstract[A](keys: Vector[Key], values: Vector[A])(key: Key, value: A): (Vector[Key], Vector[A]) = {
     var pos = 0
     while (pos < keys.size && key >= keys(pos)) pos += 1
 
@@ -498,6 +757,10 @@ abstract class BtreeIndex[Key: Ordering, Value] extends Iterable[(Key, Value)] w
         indent ++ showNode(node) ++ "\n" ++
           children.map(c => showTreeInner(level + 1, c)).mkString("\n")
 
+      case node: PointerNode2[_, _, _] =>
+        indent ++ showNode(node) ++ "\n" ++
+          node.children.map(c => showTreeInner(level + 1, c)).mkString("\n")
+
       case _ => {
         throw new IllegalStateException(s"WTF: Tree is ${node.isInstanceOf[InnerNode]} ${node.isInstanceOf[MiddleNode]} ${node.isInstanceOf[OuterNode]}")
       }
@@ -510,14 +773,27 @@ abstract class BtreeIndex[Key: Ordering, Value] extends Iterable[(Key, Value)] w
         val itemString = keys.zip(values).map(kv => s"${kv._1} -> ${kv._2}")
         "□ " ++ itemString.mkString("[", ", ", "]") ++ s" @${version}"
 
+
       case MiddleNode(version, keys, children, sibling) =>
         val siblingString = if (sibling.isDefined) s" ✓" else " ✗"
         "△ " ++ keys.mkString("[", ", ", "]") ++ s" @${version} ${siblingString}"
 
       case InnerNode(version, keys, children) =>
+        "⊙ " ++ keys.mkString("[", ", ", "]") ++ s" @${version}"
+
+
+      case RootNode2(version, keys, children) =>
         "○ " ++ keys.mkString("[", ", ", "]") ++ s" @${version}"
+
+      case InnerNode2(version, keys, children) =>
+        "⊙ " ++ keys.mkString("[", ", ", "]") ++ s" @${version}"
+
+      case MiddleNode2(version, keys, children, sibling) =>
+        val siblingString = if (sibling.isDefined) s" ✓" else " ✗"
+        "△ " ++ keys.mkString("[", ", ", "]") ++ s" @${version} ${siblingString}"
     }
   }
+
 
   private[this] def split(node: BtreeNode, key: Key, value: Value): (Key, BtreeNode, BtreeNode) = {
     logger.debug(s"Split ${showNode(node)} ${key}->${value}")
@@ -526,6 +802,8 @@ abstract class BtreeIndex[Key: Ordering, Value] extends Iterable[(Key, Value)] w
 
     val (leftNode, rightNode) = node match {
       case node @ OuterNode(_, keys, values) => {
+        val middlePos = size / 2
+        val middleKey = keys(middlePos)
 
         val leftKeys = keys.slice(0, middlePos)
         val rightKeys = keys.slice(middlePos, keys.size + 1)
@@ -601,6 +879,7 @@ abstract class BtreeIndex[Key: Ordering, Value] extends Iterable[(Key, Value)] w
     children.slice(0, pos).foldRight(Vector(newSibling)) { (n, ch) =>
       n.asInstanceOf[MiddleNode].vcopy(sibling = Some(ch(0).asInstanceOf[MiddleNode])) +: ch
     }
+
 
 
   private[this] def iterator(root: BtreeNode): Iterator[(Key, Value)] = {
