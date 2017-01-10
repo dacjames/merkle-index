@@ -485,13 +485,6 @@ abstract class BtreeIndex[Key: Ordering, Value] extends Iterable[(Key, Value)] w
   private[this] def nextVersion(v: Int): Int =
     v + 1
 
-//  private[this] def add3(node: BtreeNode, key: Key, value: Value): BtreeNode = {
-//    logger.debug(s"Add2 ${key} -> ${value} to\n${node.showTree}")
-//    val newNode: BtreeNode = ???
-//
-//    logger.debug(s"Added  ${key} -> ${value}  ==>\n${newNode.showTree}")
-//    newNode.checkInvarients()
-//  }
 
   private[this] def addInner(node: BtreeNode, key: Key, value: Value): BtreeNode = {
     logger.debug(s"Add2 ${key} -> ${value} to\n${node.showTree}")
@@ -682,10 +675,12 @@ abstract class BtreeIndex[Key: Ordering, Value] extends Iterable[(Key, Value)] w
   }
 
 
-  private[this] def fixSiblings(children: Vector[MiddleNode2], pos: Int, newSibling: MiddleNode2): Vector[MiddleNode2] =
-    children.slice(0, pos).foldRight(Vector(newSibling)) { (n, ch) =>
+  private[this] def fixSiblings(children: Vector[MiddleNode2], pos: Int, newSibling: MiddleNode2): Vector[MiddleNode2] = {
+    val fixedSibling = newSibling.copy(version = newSibling.version + 1, sibling = children.lift(pos + 1))
+    children.slice(0, pos).foldRight(Vector(fixedSibling)) { (n, ch) =>
       n.copy(version = n.version + 1, sibling = Some(ch(0))) +: ch
     } ++ children.slice(pos + 1, children.size + 1)
+  }
 
 
 
