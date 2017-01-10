@@ -37,14 +37,14 @@ abstract class BtreeIndex[Key: Ordering, Value] extends Iterable[(Key, Value)] w
 
   /**
     * Add a new key, value pair to the index
-    * @param key Key to add
-    * @param value Value to add
+    * @param key Key to addInner
+    * @param value Value to addInner
     * @return A new index with the key, value pair inserted
     */
   def add(key: Key, value: Value): BtreeIndex[Key, Value] =
     new BtreeIndex[Key, Value] {
       override def capacity = _capacity
-      override def root = add2(_root, key, value).asInstanceOf[BtreeNode]
+      override def root = addInner(_root, key, value).asInstanceOf[BtreeNode]
     }
 
   /**
@@ -72,14 +72,15 @@ abstract class BtreeIndex[Key: Ordering, Value] extends Iterable[(Key, Value)] w
       val sorted = items.sortBy(_._1)
       val keys = sorted.map(_._1)
       val values = sorted.map(_._2)
+      logger.debug(s"WTF: ${capacity}")
 
-      if (items.length <= capacity) {
+      if (items.length < capacity) {
         OuterNode(keys.toVector, values.toVector)
       } else {
-        val initialKeys = keys.take(capacity)
-        val initialValues = values.take(capacity)
+        val initialKeys = keys.take(capacity - 1)
+        val initialValues = values.take(capacity - 1)
         val initial: BtreeNode = OuterNode(initialKeys.toVector, initialValues.toVector)
-        sorted.drop(capacity).foldLeft[BtreeNode](initial) { (n, kv) => n.add(kv._1, kv._2) }
+        sorted.drop(capacity - 1).foldLeft[BtreeNode](initial) { (n, kv) => addInner(n, kv._1, kv._2) }
       }
     }
     new BtreeIndex[Key, Value] {
@@ -162,216 +163,118 @@ abstract class BtreeIndex[Key: Ordering, Value] extends Iterable[(Key, Value)] w
       val (_, newTree) = deleteInner(key)
       newTree
     }
+    private def deleteInner(key: Key): (DeleteResult, BtreeNode) = ???
 
-    private def deleteInner(key: Key): (DeleteResult, BtreeNode) = {
-      logger.debug(s"Delete ${key} from \n${this.showTree}")
-      val (newResult, newNode) = this match {
-        case node@PointerNode(_, keys, children) =>
-          val (pos, child) = findChild(key, keys, children)
-          val (result, newChild) = child.deleteInner(key)
-
-          result match {
-            case DeleteResult.Noop =>
-              node match {
-                case node: InnerNode => (DeleteResult.Noop, node.vcopy(children = children.updated(pos, newChild)))
-                case node: MiddleNode => (DeleteResult.Noop, node.vcopy(children = children.updated(pos, newChild)))
-              }
-
-            case DeleteResult.Merge =>
-              if (keys.length < 2) {
-                // TODO: HACK to get around broken delete.
-                // THe problem case is when deleting 'd' from:
-                // △ [c] @0  ✓
-                //   □ [bg -> b70, bh -> b80, bi -> b90, bj -> b100] @1
-                //   □ [c -> 30, d -> 40] @1
-                // When d is removed, it triggers merge between both outer nodes
-                // eventually resulting the the middle node having only one child
-                // That breaks other logic currently.
-                // Not sure if the "no keys" case should be temporarily legal
-                // or this results from only merging, not balancing
-                // or overly aggressive split logic (*most likely*)
-                node match {
-                  case node: InnerNode => (DeleteResult.Noop, node.vcopy(children = children.updated(pos, newChild)))
-                  case node: MiddleNode => (DeleteResult.Noop, node.vcopy(children = children.updated(pos, newChild)))
-                }
-              } else {
-                val newNode = node match {
-                  case node: MiddleNode =>
-                    if (pos < keys.length) {
-                      // the "normal" case, when not deleting from the last child
-                      val mergedChild = merge(newChild, children(pos + 1))
-
-                      node.vcopy(
-                        keys = keys.take(pos) ++ keys.drop(pos + 1),
-                        children = (children.take(pos) :+ mergedChild) ++ children.drop(pos + 2)
-                      )
-                    } else {
-                      // when deleting from the last child
-                      val mergedChild = merge(children(pos - 1), newChild)
-                      node.vcopy(
-                        keys = keys.take(pos - 1),
-                        children = children.take(pos - 1) :+ mergedChild
-                      )
-                    }
-                  case node: InnerNode =>
-
-                    if (pos < keys.length) {
-                      // the "normal" case, when not deleting from the last child
-                      val mergedChild = merge(newChild, children(pos + 1))
-
-                      val newChildren = if (mergedChild.isInstanceOf[MiddleNode]) {
-                        fixSiblings(children, pos, mergedChild) ++
-                          children.slice(pos + 1, children.size + 1)
-                      } else {
-                        (children.take(pos) :+ mergedChild) ++ children.drop(pos + 2)
-                      }
-
-
-                      node.vcopy(
-                        keys = keys.take(pos) ++ keys.drop(pos + 1),
-                        children = newChildren
-                      )
-                    } else {
-                      // when deleting from the last child
-                      val mergedChild = merge(children(pos - 1), newChild)
-                      val newChildren = if (mergedChild.isInstanceOf[MiddleNode]) {
-                        fixSiblings(children, pos, mergedChild)
-                      } else {
-                        children.take(pos - 1) :+ mergedChild
-                      }
-                      node.vcopy(
-                        keys = keys.take(pos - 1),
-                        children = newChildren
-                      )
-                    }
-
-
-                }
-                if (newNode.keys.size < (capacity / 2)) {
-                  (DeleteResult.Merge, newNode)
-                } else {
-                  (DeleteResult.Noop, newNode)
-                }
-              }
-          }
-
-        case node@OuterNode(_, keys, values) =>
-          nonNegative(keys.indexWhere(k => k == key)).map { pos =>
-            val newNode = node.vcopy(
-              keys = keys.take(pos) ++ keys.drop(pos + 1),
-              values = values.take(pos) ++ values.drop(pos + 1)
-            )
-            if (newNode.keys.size < (capacity / 2)) {
-              (DeleteResult.Merge, newNode)
-            } else {
-              (DeleteResult.Noop, newNode)
-            }
-          }.getOrElse {
-            (DeleteResult.Noop, node)
-          }
-      }
-      logger.debug(s"Delete ==> ${newResult}\n${newNode.showTree}")
-      (newResult, newNode)
-    }
-
-    def add(key: Key, value: Value): BtreeNode = {
-      logger.debug(s"Add ${key}->${value} to ${showNode(this)}")
-      val newNode = this match {
-        case node@OuterNode(_, keys, values) =>
-          // TODO: convert to using .isFull
-          if (keys.size < capacity) {
-            val (newKeys, newValues) = insert(keys, values)(key, value)
-            node.vcopy(keys = newKeys, values = newValues)
-          } else {
-            val (middleKey, left, right) = split(this, key, value)
-
-            val newKeys: Vector[Key] =
-              Vector(middleKey)
-            val newChildren: Vector[BtreeNode] =
-              Vector(left, right)
-
-            MiddleNode(newKeys, newChildren)
-          }
-
-        case node@MiddleNode(_, keys, children, sibling) =>
-          // This only handles the initial case, we should not reach here when we have a parent
-          if (node.isFull) {
-            val (middleKey, left, right) = split(node, key, value)
-            val newKeys = Vector(middleKey)
-
-            InnerNode(newKeys, Vector(left, right))
-          } else {
-            var pos = 0
-            while (pos < keys.size && keys(pos) < key) pos += 1
-            val target = children(pos)
-
-            if (target.isFull) {
-              val (middleKey, left, right) = split(target, key, value)
-              val newKeys = insert(keys)(middleKey)
-              val newChildren = children.slice(0, pos) ++
-                Vector(left, right) ++
-                children.slice(pos + 1, children.size + 1)
-
-              node.vcopy(keys = newKeys, children = newChildren)
-            } else {
-              val newChild = target.add(key, value)
-              val newChildren = children.updated(pos, newChild)
-              node.vcopy(children = newChildren)
-            }
-
-          }
-
-        case node@InnerNode(_, keys, children) =>
-          if (this.isFull) {
-            val (middleKey, left, right) = split(this, key, value)
-            val newKeys = Vector(middleKey)
-
-            InnerNode(newKeys, Vector(left, right))
-          } else {
-            var pos = 0
-            while (pos < keys.size && keys(pos) < key) pos += 1
-            val target = children(pos)
-
-            if (target.isFull) {
-              val (middleKey, left, right) = split(target, key, value)
-              val newKeys = insert(keys)(middleKey)
-
-
-              val newChildren =
-                if (pos > 0 && children(pos - 1).isInstanceOf[MiddleNode]) {
-                  // Fix sibling pointer in children when splitting middle nodes
-                  // left.asInstanceOf is safe because of the children.isInstanceOf check
-                  fixSiblings(children, pos, left) ++
-                    Vector(right) ++
-                    children.slice(pos + 1, children.size + 1)
-
-                } else {
-                  children.slice(0, pos) ++
-                    Vector(left, right) ++
-                    children.slice(pos + 1, children.size + 1)
-                }
-
-
-              node.vcopy(keys = newKeys, children = newChildren)
-            }
-            else {
-              val newChild = target.add(key, value)
-
-
-              val newChildren =
-                if (pos > 0 && children(pos - 1).isInstanceOf[OuterNode]) {
-                  fixSiblings(children, pos, newChild)
-                } else {
-                  children.updated(pos, newChild)
-                }
-
-              node.vcopy(children = newChildren)
-            }
-          }
-      }
-      logger.debug(s"Added ${key}->${value} ==>\n${newNode.showTree}")
-      newNode
-    }
+    //    private def deleteInner(key: Key): (DeleteResult, BtreeNode) = {
+//      logger.debug(s"Delete ${key} from \n${this.showTree}")
+//      val (newResult, newNode) = this match {
+//        case node@PointerNode(_, keys, children) =>
+//          val (pos, child) = findChild(key, keys, children)
+//          val (result, newChild) = child.deleteInner(key)
+//
+//          result match {
+//            case DeleteResult.Noop =>
+//              node match {
+//                case node: InnerNode => (DeleteResult.Noop, node.vcopy(children = children.updated(pos, newChild)))
+//                case node: MiddleNode => (DeleteResult.Noop, node.vcopy(children = children.updated(pos, newChild)))
+//              }
+//
+//            case DeleteResult.Merge =>
+//              if (keys.length < 2) {
+//                // TODO: HACK to get around broken delete.
+//                // THe problem case is when deleting 'd' from:
+//                // △ [c] @0  ✓
+//                //   □ [bg -> b70, bh -> b80, bi -> b90, bj -> b100] @1
+//                //   □ [c -> 30, d -> 40] @1
+//                // When d is removed, it triggers merge between both outer nodes
+//                // eventually resulting the the middle node having only one child
+//                // That breaks other logic currently.
+//                // Not sure if the "no keys" case should be temporarily legal
+//                // or this results from only merging, not balancing
+//                // or overly aggressive split logic (*most likely*)
+//                node match {
+//                  case node: InnerNode => (DeleteResult.Noop, node.vcopy(children = children.updated(pos, newChild)))
+//                  case node: MiddleNode => (DeleteResult.Noop, node.vcopy(children = children.updated(pos, newChild)))
+//                }
+//              } else {
+//                val newNode = node match {
+//                  case node: MiddleNode =>
+//                    if (pos < keys.length) {
+//                      // the "normal" case, when not deleting from the last child
+//                      val mergedChild = merge(newChild, children(pos + 1))
+//
+//                      node.vcopy(
+//                        keys = keys.take(pos) ++ keys.drop(pos + 1),
+//                        children = (children.take(pos) :+ mergedChild) ++ children.drop(pos + 2)
+//                      )
+//                    } else {
+//                      // when deleting from the last child
+//                      val mergedChild = merge(children(pos - 1), newChild)
+//                      node.vcopy(
+//                        keys = keys.take(pos - 1),
+//                        children = children.take(pos - 1) :+ mergedChild
+//                      )
+//                    }
+//                  case node: InnerNode =>
+//
+//                    if (pos < keys.length) {
+//                      // the "normal" case, when not deleting from the last child
+//                      val mergedChild = merge(newChild, children(pos + 1))
+//
+//                      val newChildren = if (mergedChild.isInstanceOf[MiddleNode2]) {
+//                        fixSiblings(children, pos, mergedChild) ++
+//                          children.slice(pos + 1, children.size + 1)
+//                      } else {
+//                        (children.take(pos) :+ mergedChild) ++ children.drop(pos + 2)
+//                      }
+//
+//
+//                      node.vcopy(
+//                        keys = keys.take(pos) ++ keys.drop(pos + 1),
+//                        children = newChildren
+//                      )
+//                    } else {
+//                      // when deleting from the last child
+//                      val mergedChild = merge(children(pos - 1), newChild)
+//                      val newChildren = if (mergedChild.isInstanceOf[MiddleNode2]) {
+//                        fixSiblings(children, pos, mergedChild)
+//                      } else {
+//                        children.take(pos - 1) :+ mergedChild
+//                      }
+//                      node.vcopy(
+//                        keys = keys.take(pos - 1),
+//                        children = newChildren
+//                      )
+//                    }
+//
+//
+//                }
+//                if (newNode.keys.size < (capacity / 2)) {
+//                  (DeleteResult.Merge, newNode)
+//                } else {
+//                  (DeleteResult.Noop, newNode)
+//                }
+//              }
+//          }
+//
+//        case node@OuterNode(_, keys, values) =>
+//          nonNegative(keys.indexWhere(k => k == key)).map { pos =>
+//            val newNode = node.vcopy(
+//              keys = keys.take(pos) ++ keys.drop(pos + 1),
+//              values = values.take(pos) ++ values.drop(pos + 1)
+//            )
+//            if (newNode.keys.size < (capacity / 2)) {
+//              (DeleteResult.Merge, newNode)
+//            } else {
+//              (DeleteResult.Noop, newNode)
+//            }
+//          }.getOrElse {
+//            (DeleteResult.Noop, node)
+//          }
+//      }
+//      logger.debug(s"Delete ==> ${newResult}\n${newNode.showTree}")
+//      (newResult, newNode)
+//    }
   }
 
   sealed abstract class PointerNode extends BtreeNode {
@@ -404,7 +307,7 @@ abstract class BtreeIndex[Key: Ordering, Value] extends Iterable[(Key, Value)] w
       (pos, target)
     }
 
-    def withPartition[A](f: (Key, (Vector[Key], Vector[ChildNode]), (Vector[Key], Vector[ChildNode])) => A) = {
+    def withPartition[A](f: (Key, (Vector[Key], Vector[ChildNode]), (Vector[Key], Vector[ChildNode])) => A): A = {
       val middlePos = this.keys.size / 2
       val middleKey = this.keys(middlePos)
 
@@ -422,42 +325,22 @@ abstract class BtreeIndex[Key: Ordering, Value] extends Iterable[(Key, Value)] w
 
   }
 
-  case class RootNode2[InnerOrRoot <: BtreeNode](version: Int,
-                                                 keys: Vector[Key],
-                                                 children: Vector[InnerOrRoot])
-    extends PointerNode2[InnerOrRoot, RootNode2[InnerOrRoot], RootNode2[InnerOrRoot]] {
-
-    override def vcopy(version: Int, keys: Vector[Key], children: Vector[InnerOrRoot]) =
-      copy(version=version, keys=keys, children=children)
-
-
-
-    override def split: RootNode2[InnerOrRoot] = withPartition {
-      case (mk, (lk, lc), (rk, rc)) =>
-
-        val leftNode = RootNode2(0, lk, lc)
-        val rightNode = RootNode2(0, rk, rc)
-
-        RootNode2(0, Vector(mk), Vector(leftNode, rightNode)).asInstanceOf[RootNode2[InnerOrRoot]]
-    }
-  }
-
   case class InnerNode2(version: Int,
                         keys: Vector[Key],
-                        children: Vector[MiddleNode2])
-    extends PointerNode2[MiddleNode2, RootNode2[InnerNode2], InnerNode2] {
+                        children: Vector[BtreeNode])
+    extends PointerNode2[BtreeNode, InnerNode2, InnerNode2] {
 
-    override def vcopy(version: Int, keys: Vector[Key], children: Vector[MiddleNode2]) =
+    override def vcopy(version: Int, keys: Vector[Key], children: Vector[BtreeNode]) =
       copy(version=version, keys=keys, children=children)
 
 
-    override def split: RootNode2[InnerNode2] = withPartition {
+    override def split: InnerNode2 = withPartition {
       case (mk, (lk, lc), (rk, rc)) =>
 
       val rightNode = InnerNode2(0, rk, rc)
       val leftNode = InnerNode2(0, lk, lc)
 
-      RootNode2(0, Vector(mk), Vector(leftNode, rightNode))
+      InnerNode2(0, Vector(mk), Vector(leftNode, rightNode))
     }
   }
 
@@ -475,8 +358,6 @@ abstract class BtreeIndex[Key: Ordering, Value] extends Iterable[(Key, Value)] w
 
         val rightNode = MiddleNode2(0, rk, rc, None)
         val leftNode = MiddleNode2(0, lk, lc, Some(rightNode))
-
-        logger.debug(s"WTF: ${showNode(leftNode)}, ${showNode(rightNode)}")
 
         InnerNode2(0, Vector(mk), Vector(leftNode, rightNode))
     }
@@ -604,58 +485,42 @@ abstract class BtreeIndex[Key: Ordering, Value] extends Iterable[(Key, Value)] w
   private[this] def nextVersion(v: Int): Int =
     v + 1
 
-  private[this] def add3(node: BtreeNode, key: Key, value: Value): BtreeNode = {
-    logger.debug(s"Add2 ${key} -> ${value} to\n${node.showTree}")
-    val newNode: BtreeNode = ???
+//  private[this] def add3(node: BtreeNode, key: Key, value: Value): BtreeNode = {
+//    logger.debug(s"Add2 ${key} -> ${value} to\n${node.showTree}")
+//    val newNode: BtreeNode = ???
+//
+//    logger.debug(s"Added  ${key} -> ${value}  ==>\n${newNode.showTree}")
+//    newNode.checkInvarients()
+//  }
 
-    logger.debug(s"Added  ${key} -> ${value}  ==>\n${newNode.showTree}")
-    newNode.checkInvarients()
-  }
-
-  private[this] def add2(node: BtreeNode, key: Key, value: Value): BtreeNode = {
+  private[this] def addInner(node: BtreeNode, key: Key, value: Value): BtreeNode = {
     logger.debug(s"Add2 ${key} -> ${value} to\n${node.showTree}")
     val newNode: BtreeNode = node match {
-
-      case node @ RootNode2(_, keys, children) =>
-        val (pos, target) = node.findTarget(key)
-        logger.debug(s"${showNode(node)} !=> ${showNode(target)}")
-        val newNode = add2(target, key, value) match {
-          case it: RootNode2[_] =>
-            // BUG: This rootNode may or may not have been the result of a split.
-            // We're not handling the case where it is properly
-            node.copy(version = node.version + 1, children = children.updated(pos, it)).checkInvarients()
-          case it: InnerNode2 =>
-            node.copy(version = node.version + 1, children = children.updated(pos, it)).checkInvarients()
-
-          case it: Any =>
-            logger.debug(s"?=> ${showNode(it)}")
-            throw new IllegalStateException(s"add2(Inner or Root) should only ever return RootNode2 or InnerNode2, not ${it}")
-        }
-        if (newNode.isFull) {
-          newNode.split
-        } else {
-          newNode
-        }
 
       case node @ InnerNode2(_, keys, children) =>
         val (pos, target) = node.findTarget(key)
         logger.debug(s"${showNode(node)} !=> ${showNode(target)}")
-        val newNode = add2(target, key, value) match {
+        val newNode = addInner(target, key, value) match {
           case it: MiddleNode2 =>
-            node.copy(version = node.version + 1, children = children.updated(pos, it)).checkInvarients()
+            val newChildren = fixSiblings(node.children.asInstanceOf[Vector[MiddleNode2]], pos, it)
+            node.copy(version = node.version + 1, children = newChildren).checkInvarients()
           case it: InnerNode2 =>
-            val newChildren = children.slice(0, pos) ++ it.children ++ children.slice(pos + 1, children.size + 1)
-            val newKeys =
-              keys.slice(0, pos) ++
-                it.keys ++
-                keys.slice(pos, keys.size + 1)
-            node.copy(
-              version = node.version + 1,
-              keys = newKeys,
-              children = newChildren
-            ).checkInvarients()
+            if (it.version == 0) {
+              val newChildren = children.slice(0, pos) ++ it.children ++ children.slice(pos + 1, children.size + 1)
+              val newKeys =
+                keys.slice(0, pos) ++
+                  it.keys ++
+                  keys.slice(pos, keys.size + 1)
+              node.copy(
+                version = node.version + 1,
+                keys = newKeys,
+                children = newChildren
+              ).checkInvarients()
+            } else {
+              node.copy(version = node.version + 1, children = children.updated(pos, it)).checkInvarients()
+            }
           case newNode: Any =>
-            throw new IllegalStateException(s"add2(OuterNode) should only ever return MiddleNode2 or InnerNode2, not ${newNode}")
+            throw new IllegalStateException(s"addInner(InnerNode2) should only ever return MiddleNode2 or InnerNode2, not ${newNode}")
         }
         if (newNode.isFull) {
           newNode.split
@@ -665,15 +530,16 @@ abstract class BtreeIndex[Key: Ordering, Value] extends Iterable[(Key, Value)] w
 
       case node @ MiddleNode2(_, keys, children, sibling) =>
         val (pos, target) = node.findTarget(key)
-        val newNode = add2(target, key, value) match {
+        val newNode = addInner(target, key, value) match {
           case newNode: OuterNode =>
             node.copy(version = node.version + 1, children = children.updated(pos, newNode)).checkInvarients()
           case newNode: MiddleNode2 =>
-            // not fixing sibling pointers
+
             val newChildren =
               children.slice(0, pos) ++
               newNode.children ++
               children.slice(pos + 1, children.size + 1)
+
             val newKeys =
               keys.slice(0, pos) ++
               newNode.keys ++
@@ -685,7 +551,7 @@ abstract class BtreeIndex[Key: Ordering, Value] extends Iterable[(Key, Value)] w
               children = newChildren
             ).checkInvarients()
           case newNode: Any =>
-            throw new IllegalStateException(s"add2(OuterNode) should only ever return OuterNode or MiddleNode, not ${newNode}")
+            throw new IllegalStateException(s"addInner(OuterNode) should only ever return OuterNode or MiddleNode, not ${newNode}")
         }
 
         if (newNode.isFull) {
@@ -782,9 +648,6 @@ abstract class BtreeIndex[Key: Ordering, Value] extends Iterable[(Key, Value)] w
         "⊙ " ++ keys.mkString("[", ", ", "]") ++ s" @${version}"
 
 
-      case RootNode2(version, keys, children) =>
-        "○ " ++ keys.mkString("[", ", ", "]") ++ s" @${version}"
-
       case InnerNode2(version, keys, children) =>
         "⊙ " ++ keys.mkString("[", ", ", "]") ++ s" @${version}"
 
@@ -794,62 +657,6 @@ abstract class BtreeIndex[Key: Ordering, Value] extends Iterable[(Key, Value)] w
     }
   }
 
-
-  private[this] def split(node: BtreeNode, key: Key, value: Value): (Key, BtreeNode, BtreeNode) = {
-    logger.debug(s"Split ${showNode(node)} ${key}->${value}")
-    val middlePos = node.size / 2
-    val middleKey = node.keys(middlePos)
-
-    val (leftNode, rightNode) = node match {
-      case node @ OuterNode(_, keys, values) => {
-        val middlePos = size / 2
-        val middleKey = keys(middlePos)
-
-        val leftKeys = keys.slice(0, middlePos)
-        val rightKeys = keys.slice(middlePos, keys.size + 1)
-
-        val leftValues = values.slice(0, middlePos)
-        val rightValues = values.slice(middlePos, values.size + 1)
-
-        if (key < middleKey) {
-          val (newKeys, newValues) = insert(leftKeys, leftValues)(key, value)
-          val rightNode = OuterNode(rightKeys, rightValues)
-          val leftNode = OuterNode(newKeys, newValues)
-          (leftNode, rightNode)
-        } else {
-          val (newKeys, newValues) = insert(rightKeys, rightValues)(key, value)
-          val rightNode = OuterNode(newKeys, newValues)
-          val leftNode = OuterNode(leftKeys, leftValues)
-          (leftNode, rightNode)
-        }
-      }
-      case node @ PointerNode(_, keys, children) =>
-        val leftKeys = keys.slice(0, middlePos)
-        val rightKeys = keys.slice(middlePos + 1, keys.size + 1)
-        val leftChildren = children.slice(0, middlePos + 1)
-        val rightChildren = children.slice(middlePos + 1, children.size + 1)
-
-        val (left, right) = node match {
-          case node: InnerNode =>
-            (InnerNode(leftKeys, leftChildren), InnerNode(rightKeys, rightChildren))
-
-          case node: MiddleNode =>
-            val left = MiddleNode(leftKeys, leftChildren)
-            val right = MiddleNode(rightKeys, rightChildren, left)
-            (left, right)
-        }
-        logger.debug(s"wtf: ${showNode(left)} ${showNode(right)}")
-        if (key < middleKey) {
-          (left.add(key, value), right)
-        } else {
-          (left, right.add(key, value))
-        }
-    }
-
-    logger.debug(s"==> ${showNode(leftNode)} «${middleKey}» ${showNode(rightNode)}")
-
-    (middleKey, leftNode, rightNode)
-  }
 
   private[this] def merge(left: BtreeNode, right: BtreeNode): BtreeNode = {
     logger.debug("Merging...")
@@ -875,10 +682,10 @@ abstract class BtreeIndex[Key: Ordering, Value] extends Iterable[(Key, Value)] w
   }
 
 
-  private[this] def fixSiblings(children: Vector[BtreeNode], pos: Int, newSibling: BtreeNode) =
+  private[this] def fixSiblings(children: Vector[MiddleNode2], pos: Int, newSibling: MiddleNode2): Vector[MiddleNode2] =
     children.slice(0, pos).foldRight(Vector(newSibling)) { (n, ch) =>
-      n.asInstanceOf[MiddleNode].vcopy(sibling = Some(ch(0).asInstanceOf[MiddleNode])) +: ch
-    }
+      n.copy(version = n.version + 1, sibling = Some(ch(0))) +: ch
+    } ++ children.slice(pos + 1, children.size + 1)
 
 
 
@@ -886,9 +693,9 @@ abstract class BtreeIndex[Key: Ordering, Value] extends Iterable[(Key, Value)] w
     @tailrec
     def findMiddleOrOuter(node: BtreeNode): BtreeNode =
       node match {
-        case InnerNode(_, _, children) =>
+        case InnerNode2(_, _, children) =>
           findMiddleOrOuter(children(0))
-        case node: MiddleNode =>
+        case node: MiddleNode2 =>
           node
         case node: OuterNode =>
           node
@@ -912,7 +719,7 @@ abstract class BtreeIndex[Key: Ordering, Value] extends Iterable[(Key, Value)] w
           }
         }
 
-      case middleRoot: MiddleNode =>
+      case middleRoot: MiddleNode2 =>
         new Iterator[(Key, Value)] {
           private var currentNode = middleRoot
           private var currentChild = 0
@@ -923,7 +730,7 @@ abstract class BtreeIndex[Key: Ordering, Value] extends Iterable[(Key, Value)] w
               currentNode.sibling.isDefined
 
           override def next: (Key, Value) = {
-            val child = currentNode.children(currentChild).asInstanceOf[OuterNode]
+            val child = currentNode.children(currentChild)
             val key = child.keys(currentPos)
             val value = child.values(currentPos)
 

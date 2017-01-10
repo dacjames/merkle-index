@@ -6,14 +6,14 @@ import io.dac.tsindex.memory.{BtreeIndex, InMemoryImpl}
   */
 class BtreeSpec extends AbstractSpec {
 
-//  "An Index" should "return the values inserted" in {
-//    InMemoryImpl.execute { index =>
-//      for {
-//        _ <- index.insert("hello", "10")
-//        v <- index.lookup("hello")
-//      } yield v
-//    } shouldEqual "10"
-//  }
+  "An Index" should "return the values inserted" in {
+    InMemoryImpl.execute { index =>
+      for {
+        _ <- index.insert("hello", "10")
+        v <- index.lookup("hello")
+      } yield v
+    } shouldEqual "10"
+  }
 
   it should "return values inserted with many values" in {
     InMemoryImpl.execute { index =>
@@ -91,12 +91,18 @@ class BtreeSpec extends AbstractSpec {
         _ <- index.insert("bh", "b80")
         _ <- index.insert("bi", "b90")
         _ <- index.insert("bj", "b100")
-      // need to go to bp to expose current bug
+        _ <- index.insert("bk", "b110")
+        _ <- index.insert("bl", "b120")
+        _ <- index.insert("bm", "b130")
+        _ <- index.insert("bn", "b140")
+        _ <- index.insert("bo", "b150")
+        _ <- index.insert("bp", "b160")
         v1 <- index.lookup("h")
         v2 <- index.lookup("bb")
         v3 <- index.lookup("bj")
-      } yield (v1, v2, v3)
-    } shouldEqual ("80", "b20", "b100")
+        v4 <- index.lookup("bp")
+      } yield (v1, v2, v3, v4)
+    } shouldEqual ("80", "b20", "b100", "b160")
   }
 //
 //  it should "support deletes" in {
