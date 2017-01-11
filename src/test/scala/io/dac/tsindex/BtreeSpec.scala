@@ -104,18 +104,18 @@ class BtreeSpec extends AbstractSpec {
       } yield (v1, v2, v3, v4)
     } shouldEqual ("80", "b20", "b100", "b160")
   }
-//
-//  it should "support deletes" in {
-//    an[NoSuchElementException] should be thrownBy {
-//      InMemoryImpl.execute { index =>
-//        for {
-//          _ <- index.insert("hello", "10")
-//          _ <- index.delete("hello")
-//          v <- index.lookup("hello")
-//        } yield v
-//      }
-//    }
-//  }
+
+  it should "support deletes" in {
+    an[NoSuchElementException] should be thrownBy {
+      InMemoryImpl.execute { index =>
+        for {
+          _ <- index.insert("hello", "10")
+          _ <- index.delete("hello")
+          v <- index.lookup("hello")
+        } yield v
+      }
+    }
+  }
 //  it should "support deletes with many values" in {
 //
 //    println("DELETES =================== DELETES")
@@ -196,16 +196,16 @@ class BtreeSpec extends AbstractSpec {
 //    } shouldEqual "80"
 //  }
 
-  "An InnerNode" should "have a vcopy method that mirrors the behavior of copy with updated versioning" in {
-    val index = BtreeIndex.empty[String, String]
-    val inner = index.InnerNode(Vector.empty, Vector.empty)
-
-    inner.vcopy() shouldEqual inner
-    inner.vcopy(keys = Vector("asdf")) shouldEqual index.InnerNode(1, Vector("asdf"), Vector.empty)
-    inner.vcopy(children = Vector(inner)) shouldEqual index.InnerNode(0, Vector.empty, Vector(inner))
-    inner.vcopy(keys = Vector("asdf"), children = Vector(inner)) shouldEqual index.InnerNode(1, Vector("asdf"), Vector(inner))
-
-  }
+//  "An InnerNode" should "have a vcopy method that mirrors the behavior of copy with updated versioning" in {
+//    val index = BtreeIndex.empty[String, String]
+//    val inner = index.InnerNode(Vector.empty, Vector.empty)
+//
+//    inner.vcopy() shouldEqual inner
+//    inner.vcopy(keys = Vector("asdf")) shouldEqual index.InnerNode(1, Vector("asdf"), Vector.empty)
+//    inner.vcopy(children = Vector(inner)) shouldEqual index.InnerNode(0, Vector.empty, Vector(inner))
+//    inner.vcopy(keys = Vector("asdf"), children = Vector(inner)) shouldEqual index.InnerNode(1, Vector("asdf"), Vector(inner))
+//
+//  }
 
   "An OuterNode" should "have a vcopy method that mirrors the behavior of copy with updated versioning" in {
     val index = BtreeIndex.empty[String, String]
