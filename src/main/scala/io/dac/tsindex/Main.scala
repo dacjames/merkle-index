@@ -1,6 +1,6 @@
 package io.dac.tsindex
 
-import io.dac.tsindex.memory.BtreeIndex
+import io.dac.tsindex.inmemory.BtreeIndex
 
 
 /**

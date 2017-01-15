@@ -5,7 +5,7 @@ import cats.Eq
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.eq._
-import io.dac.tsindex.memory.InMemoryImpl
+import io.dac.tsindex.inmemory.InMemoryImpl
 import io.dac.tsindex.trivial.TrivialImpl
 
 import scala.util.{Failure, Success, Try}

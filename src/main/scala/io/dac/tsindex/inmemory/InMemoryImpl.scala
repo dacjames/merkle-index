@@ -1,4 +1,4 @@
-package io.dac.tsindex.memory
+package io.dac.tsindex.inmemory
 
 import cats.free.Free
 import cats.{Id, ~>}
