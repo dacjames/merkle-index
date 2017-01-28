@@ -14,9 +14,11 @@ abstract class BtreeIndex[Key: Ordering, Value] extends Iterable[(Key, Value)] w
   type HashCode = String
   protected def degree: Int
   protected def root: BtreeNode
+  protected def checkInvariants: Boolean
 
   private[this] def _degree = degree
   private[this] def _root = root
+  private[this] def _checkInvariants = checkInvariants
 
   /**
     * Retrieve a value from the index for a given key
@@ -45,6 +47,7 @@ abstract class BtreeIndex[Key: Ordering, Value] extends Iterable[(Key, Value)] w
     new BtreeIndex[Key, Value] {
       override def degree = _degree
       override def root = _root.add(key, value).asInstanceOf[BtreeNode]
+      override def checkInvariants = _checkInvariants
     }
 
   /**
@@ -57,6 +60,7 @@ abstract class BtreeIndex[Key: Ordering, Value] extends Iterable[(Key, Value)] w
     new BtreeIndex[Key, Value] {
       override def degree = _degree
       override def root = _root.delete(key).asInstanceOf[BtreeNode]
+      override def checkInvariants = _checkInvariants
     }
 
   /**
@@ -69,6 +73,7 @@ abstract class BtreeIndex[Key: Ordering, Value] extends Iterable[(Key, Value)] w
     new BtreeIndex[Key, Value] {
       override def degree = _degree
       override def root = keys.foldLeft(_root)((n, k) => n.delete(k)).asInstanceOf[BtreeNode]
+      override def checkInvariants = _checkInvariants
     }
 
   /**
@@ -94,6 +99,7 @@ abstract class BtreeIndex[Key: Ordering, Value] extends Iterable[(Key, Value)] w
     new BtreeIndex[Key, Value] {
       override def degree = _degree
       override def root = newRoot.asInstanceOf[BtreeNode]
+      override def checkInvariants = _checkInvariants
     }
   }
 
@@ -144,9 +150,13 @@ abstract class BtreeIndex[Key: Ordering, Value] extends Iterable[(Key, Value)] w
     def delete(key: Key): BtreeNode =
       deleteInner(this, key)
 
-    def checkInvariants(): this.type =
-      checkInvariantsInner(this)
-
+    def checkInvariants(): this.type = {
+      if (_checkInvariants) {
+        checkInvariantsInner(this)
+      } else {
+        this
+      }
+    }
   }
 
   sealed abstract class PointerNode[ChildNode <: BtreeNode, ParentNode <: BtreeNode,
@@ -328,7 +338,7 @@ abstract class BtreeIndex[Key: Ordering, Value] extends Iterable[(Key, Value)] w
         val newNode = addInner(target, key, value) match {
           case newNode: MiddleNode =>
             val newChildren = fixSiblings(node.children.asInstanceOf[Vector[MiddleNode]], pos, newNode)
-            node.copy(version = node.version + 1, children = newChildren).checkInvariants()
+            node.copy(version = nextVersion(node.version), children = newChildren).checkInvariants()
 
           case newNode: InnerNode =>
             if (newNode.version == 0) {
@@ -342,12 +352,12 @@ abstract class BtreeIndex[Key: Ordering, Value] extends Iterable[(Key, Value)] w
                   newNode.keys ++
                   keys.slice(pos, keys.size + 1)
               node.copy(
-                version = node.version + 1,
+                version = nextVersion(node.version),
                 keys = newKeys,
                 children = newChildren
               ).checkInvariants()
             } else {
-              node.copy(version = node.version + 1, children = children.updated(pos, newNode)).checkInvariants()
+              node.copy(version = nextVersion(node.version), children = children.updated(pos, newNode)).checkInvariants()
             }
 
           case newNode: Any =>
@@ -363,7 +373,7 @@ abstract class BtreeIndex[Key: Ordering, Value] extends Iterable[(Key, Value)] w
         val (pos, target) = node.findTarget(key)
         val newNode = addInner(target, key, value) match {
           case newNode: OuterNode =>
-            node.copy(version = node.version + 1, children = children.updated(pos, newNode)).checkInvariants()
+            node.copy(version = nextVersion(node.version), children = children.updated(pos, newNode)).checkInvariants()
 
           case newNode: MiddleNode =>
             val newChildren =
@@ -377,7 +387,7 @@ abstract class BtreeIndex[Key: Ordering, Value] extends Iterable[(Key, Value)] w
               keys.slice(pos, keys.size + 1)
 
             node.copy(
-              version = node.version + 1,
+              version = nextVersion(node.version),
               keys = newKeys,
               children = newChildren
             ).checkInvariants()
@@ -414,7 +424,7 @@ abstract class BtreeIndex[Key: Ordering, Value] extends Iterable[(Key, Value)] w
       case node @ OuterNode(version, keys, values) =>
         nonNegative(keys.indexWhere(_ == key)).map { pos =>
           node.copy(
-            version = version + 1,
+            version = nextVersion(version),
             keys = keys.take(pos) ++ keys.drop(pos + 1),
             values = values.take(pos) ++ values.drop(pos + 1)
           )
@@ -437,19 +447,19 @@ abstract class BtreeIndex[Key: Ordering, Value] extends Iterable[(Key, Value)] w
           val stolenValue = right.values.head
 
           val newLeft = left.copy(
-            version = left.version + 1,
+            version = nextVersion(left.version),
             keys = left.keys :+ stolenKey,
             values = left.values :+ stolenValue
           )
 
           val newRight = right.copy(
-            version = right.version + 1,
+            version = nextVersion(right.version),
             keys = right.keys.drop(1),
             values = right.values.drop(1)
           )
 
           node.copy(
-            version = node.version + 1,
+            version = nextVersion(node.version),
             keys = keys.updated(keyPos, newRight.keys.head),
             children = children.updated(leftPos, newLeft).updated(rightPos, newRight)
           ).checkInvariants()
@@ -459,19 +469,19 @@ abstract class BtreeIndex[Key: Ordering, Value] extends Iterable[(Key, Value)] w
           val stolenValue = left.values.last
 
           val newLeft = left.copy(
-            version = left.version + 1,
+            version = nextVersion(left.version),
             keys = left.keys.dropRight(1),
             values = left.values.dropRight(1)
           )
 
           val newRight = right.copy(
-            version = right.version + 1,
+            version = nextVersion(right.version),
             keys = stolenKey +: right.keys,
             values = stolenValue +: right.values
           )
 
           node.copy(
-            version = node.version + 1,
+            version = nextVersion(node.version),
             keys = keys.updated(keyPos, stolenKey),
             children = children.updated(leftPos, newLeft).updated(rightPos, newRight)
           ).checkInvariants()
@@ -480,7 +490,7 @@ abstract class BtreeIndex[Key: Ordering, Value] extends Iterable[(Key, Value)] w
 
           val transient = right.split
           node.copy(
-            version = node.version + 1,
+            version = nextVersion(node.version),
             keys = keys.take(keyPos) ++ transient.keys ++ keys.drop(keyPos + 1),
             children = children.take(leftPos) ++ transient.children ++ children.drop(rightPos + 1)
           ).checkInvariants()
@@ -489,7 +499,7 @@ abstract class BtreeIndex[Key: Ordering, Value] extends Iterable[(Key, Value)] w
 
           val transient = left.split
           node.copy(
-            version = node.version + 1,
+            version = nextVersion(node.version),
             keys = keys.take(keyPos) ++ transient.keys ++ keys.drop(keyPos + 1),
             children = children.take(leftPos) ++ transient.children ++ children.drop(rightPos + 1)
           ).checkInvariants()
@@ -626,19 +636,19 @@ abstract class BtreeIndex[Key: Ordering, Value] extends Iterable[(Key, Value)] w
     }
 
   private[this] def fixSiblings(children: Vector[MiddleNode], pos: Int, newSibling: MiddleNode): Vector[MiddleNode] = {
-    val fixedSibling = newSibling.copy(version = newSibling.version + 1, sibling = children.lift(pos + 1))
+    val fixedSibling = newSibling.copy(version = nextVersion(newSibling.version), sibling = children.lift(pos + 1))
 
     children.slice(0, pos).foldRight(Vector(fixedSibling)) { (n, ch) =>
-      n.copy(version = n.version + 1, sibling = Some(ch(0))) +: ch
+      n.copy(version = nextVersion(n.version), sibling = Some(ch(0))) +: ch
     } ++ children.slice(pos + 1, children.size + 1)
   }
 
   private[this] def fixSiblings(children: Vector[MiddleNode], leftPos: Int, rightPos: Int, newSiblings: Vector[MiddleNode]): Vector[MiddleNode] = {
     val lastSibling = newSiblings.last
-    val fixedSibling = lastSibling.copy(version = lastSibling.version + 1, sibling = children.lift(rightPos + 1))
+    val fixedSibling = lastSibling.copy(version = nextVersion(lastSibling.version), sibling = children.lift(rightPos + 1))
 
     (children.slice(0, leftPos) ++ newSiblings.dropRight(1)).foldRight(Vector(fixedSibling)) { (n, ch) =>
-      n.copy(version = n.version + 1, sibling = Some(ch(0))) +: ch
+      n.copy(version = nextVersion(n.version), sibling = Some(ch(0))) +: ch
     } ++ children.slice(rightPos + 1, children.size + 1)
   }
 
@@ -712,23 +722,25 @@ abstract class BtreeIndex[Key: Ordering, Value] extends Iterable[(Key, Value)] w
 
 object BtreeIndex {
   private val defaultDegree = 4
+  private val defaultCheckInvariants = false
 
-  def empty[K: Ordering, V] = new BtreeIndex[K, V] {
-    override def degree = defaultDegree
-    override def root = OuterNode()
-  }
-
-  def withDegree[K: Ordering, V](n: Int)(items: (K, V)*): BtreeIndex[K, V] =
-    new BtreeIndex[K, V] {
-      override def degree = n
-      override def root = OuterNode()
-    }.construct(items)
+  def empty[K: Ordering, V] =
+    withConfig()(List.empty[(K, V)]: _*)
 
   def apply[K: Ordering, V](items: (K, V)*): BtreeIndex[K, V] =
+    withConfig()(items: _*)
+
+  def withConfig[K: Ordering, V](degree: Int = defaultDegree, checkInvariants: Boolean = defaultCheckInvariants)(items: (K, V)*) = {
+    val _degree = degree
+    val _checkInvariants = checkInvariants
+
     new BtreeIndex[K, V] {
-      override def degree = defaultDegree
+      override def degree = _degree
       override def root = OuterNode()
+      override def checkInvariants = _checkInvariants
     }.construct(items)
+  }
+
 
 }
 
