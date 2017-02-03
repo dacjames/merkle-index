@@ -1,0 +1,47 @@
+#%RAML 1.0 Library
+usage: |
+  Defines Metric related types
+
+uses:
+  tags: tags.raml
+  payload: payload.raml
+  ints: ints.raml
+
+types:
+  Metric:
+    type: object
+    description: A single metric
+    additionalProperties: false
+    properties:
+      timestamp:
+        type: Int64 | double | datetime
+        description: |
+          Timestampn of metric.
+          If an integer, interpretted as fixed point nanoseconds from Jan 1, 1970.
+          If a double, interpretted as {seconds}.{fractions of second} from Jan 1, 1970.
+          If a datetime, parsed as an ISO 8601 datetime and converted to nanoseconds since Jan 1, 1970
+
+      name:
+        type: string
+        description: Name of metric. An alias for tags['name'], including seperately because it is mandatory.
+
+      tags:
+        type: Tagset
+        description: Set of tags associated with the metric.
+
+      value:
+        type: Int64 | double | string
+        description: Value of metric.
+
+  Metrics:
+    type: Metric[]
+    minItems: 1
+    description: Collection of metrics
+
+  Series:
+    type: object
+    description: Series of metrics
+    properties:
+
+
+

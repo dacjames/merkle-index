@@ -1,0 +1,25 @@
+###
+# Post a new metric to the index
+###
+post:
+  description: Add a new metric to the index
+  body:
+    application/json:
+      examples:
+        - timestamp: 1485630122000000
+          name: page_loads
+          tags:
+            - ["path", "/"]
+            - ["path", "/home"]
+            - ["browser", "safari"]
+            - ["device", "iphone7"]
+          value: 3756
+        -
+          - timestamp: 1485630122000000
+            name: page_loads
+            tags:
+              - ["path", "/"]
+              - ["path", "/home"]
+              - ["browser", "safari"]
+              - ["device", "iphone7"]
+            value: 3756

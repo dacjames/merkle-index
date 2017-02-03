@@ -1,0 +1,16 @@
+#%RAML 1.0 Library
+usage: |
+  Defines Tag related types
+
+types:
+  Tag:
+    type: string[]
+    minItems: 2
+    maxItems: 2
+
+  Tagset:
+    type: Tag[]
+    uniqueItems: true
+    example:
+      - ["env", "prod"]
+
